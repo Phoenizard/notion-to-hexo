@@ -819,14 +819,58 @@ def main():
             if not success:
                 print(f"警告: 生成静态文件时出现错误")
 
-            # 8. 完成
-            print("\n" + "="*60)
-            print("发布完成!")
-            print("="*60)
-            print(f"文章文件: {post_file}")
-            print(f"\n请检查文章内容,确认无误后运行:")
-            print(f"  cd {HEXO_ROOT}")
-            print(f"  hexo deploy")
+            # 8. 启动本地预览服务器
+            print_step(5, "启动本地预览服务器")
+            print("正在启动 hexo serve...")
+
+            import time
+            serve_process = subprocess.Popen(
+                f"cd {HEXO_ROOT} && hexo serve",
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+
+            # 等待服务器启动
+            time.sleep(3)
+
+            # 检查服务器是否成功启动
+            if serve_process.poll() is not None:
+                print("警告: hexo serve 启动失败")
+            else:
+                print("\n" + "="*60)
+                print("本地预览服务器已启动!")
+                print("="*60)
+                print(f"文章文件: {post_file}")
+                print(f"\n预览地址: http://localhost:4000")
+                print("请在浏览器中检查文章内容")
+                print("="*60)
+
+                # 询问是否部署
+                deploy_choice = input("\n确认部署到远程? (y/n): ").strip().lower()
+
+                # 停止预览服务器
+                print("\n正在停止预览服务器...")
+                serve_process.terminate()
+                try:
+                    serve_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    serve_process.kill()
+                print("预览服务器已停止")
+
+                if deploy_choice == 'y':
+                    print_step(6, "部署到远程")
+                    deploy_success, _ = run_hexo_command("hexo deploy")
+                    if deploy_success:
+                        print("\n" + "="*60)
+                        print("部署完成!")
+                        print("="*60)
+                    else:
+                        print("警告: 部署时出现错误")
+                else:
+                    print("\n已跳过部署。如需稍后部署,请运行:")
+                    print(f"  cd {HEXO_ROOT}")
+                    print(f"  hexo deploy")
 
     except Exception as e:
         print(f"\n错误: {str(e)}")
