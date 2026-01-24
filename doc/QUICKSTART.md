@@ -60,10 +60,45 @@ cp config.example.json config.json
 
 **注意:** `config.json`已被添加到`.gitignore`,不会被提交到Git
 
+### 4.1 使用 .env 文件（推荐，更安全）
+
+为了避免意外泄露密钥，推荐使用 `.env` 文件存储敏感信息：
+
+1. **复制示例文件：**
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **编辑 `.env` 文件：**
+   ```bash
+   # Notion API Token
+   NOTION_TOKEN=secret_your_token_here
+
+   # 阿里云 OSS 配置
+   NOTION_OSS_ACCESS_KEY_ID=your_access_key_id
+   NOTION_OSS_ACCESS_KEY_SECRET=your_access_key_secret
+   NOTION_OSS_BUCKET_NAME=your-bucket-name
+   NOTION_OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com
+   NOTION_OSS_CDN_DOMAIN=your-bucket.oss-cn-hangzhou.aliyuncs.com
+   ```
+
+3. **python-dotenv 已包含在 `requirements.txt` 中，无需单独安装。**
+
+**配置优先级：**
+```
+环境变量 (.env) > config.json > 默认值 > 交互式输入
+```
+
+**安全提示：**
+- `.env` 已添加到 `.gitignore`，不会被提交
+- 环境变量优先级高于 `config.json`，可安全删除 config 中的密钥
+- 如果不安装 python-dotenv，也可以手动 `source .env` 或使用 `export` 设置环境变量
+- 推荐：`config.json` 仅保留非敏感配置（如 `blog_path`、`default_category`）
+
 ### 5. 安装依赖
 
 ```bash
-pip install requests oss2 --break-system-packages
+pip install -r requirements.txt
 ```
 
 ## 二、使用工作流发布文章

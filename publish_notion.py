@@ -35,27 +35,34 @@ def main():
     config = load_config()
 
     if config:
-        # 设置Hexo博客路径
+        # 设置Hexo博客路径 - 仅当环境变量未设置时
         if config.get('hexo', {}).get('blog_path'):
-            blog_path = Path(config['hexo']['blog_path'])
-            if blog_path.exists():
-                notion_to_hexo.HEXO_ROOT = blog_path
-            else:
-                print(f"警告: 配置的blog_path不存在: {blog_path}")
+            if not os.environ.get('HEXO_ROOT'):
+                blog_path = Path(config['hexo']['blog_path'])
+                if blog_path.exists():
+                    notion_to_hexo.HEXO_ROOT = blog_path
+                else:
+                    print(f"警告: 配置的blog_path不存在: {blog_path}")
 
-        # 设置Notion token
+        # 设置Notion token - 仅当环境变量未设置时
         if config.get('notion', {}).get('token'):
-            notion_to_hexo.NOTION_TOKEN = config['notion']['token']
-            os.environ['NOTION_TOKEN'] = config['notion']['token']
+            if not os.environ.get('NOTION_TOKEN'):
+                notion_to_hexo.NOTION_TOKEN = config['notion']['token']
+                os.environ['NOTION_TOKEN'] = config['notion']['token']
 
-        # 设置OSS配置
+        # 设置OSS配置 - 仅当环境变量未设置时
         if config.get('oss'):
             oss_config = config['oss']
-            notion_to_hexo.OSS_CONFIG['access_key_id'] = oss_config.get('access_key_id', '')
-            notion_to_hexo.OSS_CONFIG['access_key_secret'] = oss_config.get('access_key_secret', '')
-            notion_to_hexo.OSS_CONFIG['bucket_name'] = oss_config.get('bucket_name', '')
-            notion_to_hexo.OSS_CONFIG['endpoint'] = oss_config.get('endpoint', '')
-            notion_to_hexo.OSS_CONFIG['cdn_domain'] = oss_config.get('cdn_domain', '')
+            if not os.environ.get('NOTION_OSS_ACCESS_KEY_ID'):
+                notion_to_hexo.OSS_CONFIG['access_key_id'] = oss_config.get('access_key_id', '')
+            if not os.environ.get('NOTION_OSS_ACCESS_KEY_SECRET'):
+                notion_to_hexo.OSS_CONFIG['access_key_secret'] = oss_config.get('access_key_secret', '')
+            if not os.environ.get('NOTION_OSS_BUCKET_NAME'):
+                notion_to_hexo.OSS_CONFIG['bucket_name'] = oss_config.get('bucket_name', '')
+            if not os.environ.get('NOTION_OSS_ENDPOINT'):
+                notion_to_hexo.OSS_CONFIG['endpoint'] = oss_config.get('endpoint', '')
+            if not os.environ.get('NOTION_OSS_CDN_DOMAIN'):
+                notion_to_hexo.OSS_CONFIG['cdn_domain'] = oss_config.get('cdn_domain', '')
 
         print("✓ 已从配置文件加载设置\n")
 

@@ -21,12 +21,26 @@ import sys
 import subprocess
 import re
 import json
+import time
+import shlex
 import requests
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse, unquote
 import base64
 import hashlib
+import shutil
+
+# Optional: load .env file for secrets
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).parent / '.env'
+    if _env_path.exists():
+        load_dotenv(_env_path)
+        print(f"✓ 已从 {_env_path} 加载环境变量")
+except ImportError:
+    # python-dotenv not installed, skip .env loading
+    pass
 
 # ==================== 配置区域 ====================
 
@@ -56,43 +70,123 @@ HEXO_CONFIG = {
     'default_mathjax': False,
 }
 
+# ==================== 网络配置 ====================
+# Network configuration for timeouts and retries
+
+TIMEOUT_API = 15      # Notion API calls (seconds)
+TIMEOUT_IMAGE = 30    # Image downloads (seconds)
+MAX_RETRIES = 3       # Number of retry attempts
+RETRY_BACKOFF = 2     # Exponential backoff multiplier
+
+# ==================== 环境变量名称 ====================
+# 安全警告: 请勿将密钥提交到版本控制系统!
+# 推荐使用环境变量或.env文件存储敏感信息
+# WARNING: Never commit secrets to version control!
+# Use environment variables or .env file for sensitive data.
+
+ENV_VARS = {
+    'notion_token': 'NOTION_TOKEN',
+    'oss_access_key_id': 'NOTION_OSS_ACCESS_KEY_ID',
+    'oss_access_key_secret': 'NOTION_OSS_ACCESS_KEY_SECRET',
+    'oss_bucket_name': 'NOTION_OSS_BUCKET_NAME',
+    'oss_endpoint': 'NOTION_OSS_ENDPOINT',
+    'oss_cdn_domain': 'NOTION_OSS_CDN_DOMAIN',
+    'hexo_root': 'HEXO_ROOT',
+}
+
 # 加载配置文件
 def load_config():
-    """从config.json加载配置"""
+    """
+    从配置文件和环境变量加载配置
+
+    优先级 (从高到低):
+    1. 环境变量 (包括从.env加载的)
+    2. config.json
+    3. 默认值
+    4. 交互式输入 (在main()中处理)
+
+    Priority (highest to lowest):
+    1. Environment variables (including those from .env)
+    2. config.json
+    3. Default values
+    4. Interactive prompts (handled in main())
+    """
     global HEXO_ROOT, NOTION_TOKEN, OSS_CONFIG, HEXO_CONFIG
 
     config_path = Path(__file__).parent / 'config.json'
+    config = {}
+
+    # Step 1: Load config.json as base (if exists)
     if config_path.exists():
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-
-        # 加载Notion配置
-        if 'notion' in config and config['notion'].get('token'):
-            NOTION_TOKEN = config['notion']['token']
-
-        # 加载OSS配置
-        if 'oss' in config:
-            oss = config['oss']
-            OSS_CONFIG['access_key_id'] = oss.get('access_key_id', '')
-            OSS_CONFIG['access_key_secret'] = oss.get('access_key_secret', '')
-            OSS_CONFIG['bucket_name'] = oss.get('bucket_name', '')
-            OSS_CONFIG['endpoint'] = oss.get('endpoint', '')
-            OSS_CONFIG['cdn_domain'] = oss.get('cdn_domain', '')
-
-        # 加载Hexo配置
-        if 'hexo' in config:
-            hexo = config['hexo']
-            if hexo.get('blog_path'):
-                HEXO_ROOT = Path(hexo['blog_path'])
-            HEXO_CONFIG['default_title'] = hexo.get('default_title', '')
-            HEXO_CONFIG['default_category'] = hexo.get('default_category', '学习笔记')
-            HEXO_CONFIG['default_tags'] = hexo.get('default_tags', [])
-            HEXO_CONFIG['default_description'] = hexo.get('default_description', '')
-            HEXO_CONFIG['default_mathjax'] = hexo.get('default_mathjax', False)
-
-        print(f"✓ 已从 {config_path} 加载配置")
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            print(f"✓ 已从 {config_path} 加载配置")
+        except json.JSONDecodeError as e:
+            print(f"警告: config.json 格式错误: {e}")
     else:
         print(f"未找到配置文件: {config_path}")
+
+    # Step 2: Apply config.json values (will be overridden by env vars)
+    if 'notion' in config and config['notion'].get('token'):
+        NOTION_TOKEN = config['notion']['token']
+
+    if 'oss' in config:
+        oss = config['oss']
+        OSS_CONFIG['access_key_id'] = oss.get('access_key_id', '')
+        OSS_CONFIG['access_key_secret'] = oss.get('access_key_secret', '')
+        OSS_CONFIG['bucket_name'] = oss.get('bucket_name', '')
+        OSS_CONFIG['endpoint'] = oss.get('endpoint', '')
+        OSS_CONFIG['cdn_domain'] = oss.get('cdn_domain', '')
+
+    if 'hexo' in config:
+        hexo = config['hexo']
+        if hexo.get('blog_path'):
+            HEXO_ROOT = Path(hexo['blog_path'])
+        HEXO_CONFIG['default_title'] = hexo.get('default_title', '')
+        HEXO_CONFIG['default_category'] = hexo.get('default_category', '学习笔记')
+        HEXO_CONFIG['default_tags'] = hexo.get('default_tags', [])
+        HEXO_CONFIG['default_description'] = hexo.get('default_description', '')
+        HEXO_CONFIG['default_mathjax'] = hexo.get('default_mathjax', False)
+
+    # Step 3: Environment variables OVERRIDE config.json
+    # This ensures secrets can be provided securely via env vars
+
+    # Notion token
+    env_token = os.environ.get(ENV_VARS['notion_token'])
+    if env_token:
+        NOTION_TOKEN = env_token
+        print(f"✓ 使用环境变量 {ENV_VARS['notion_token']}")
+
+    # OSS credentials
+    env_oss_key = os.environ.get(ENV_VARS['oss_access_key_id'])
+    if env_oss_key:
+        OSS_CONFIG['access_key_id'] = env_oss_key
+        print(f"✓ 使用环境变量 {ENV_VARS['oss_access_key_id']}")
+
+    env_oss_secret = os.environ.get(ENV_VARS['oss_access_key_secret'])
+    if env_oss_secret:
+        OSS_CONFIG['access_key_secret'] = env_oss_secret
+        print(f"✓ 使用环境变量 {ENV_VARS['oss_access_key_secret']}")
+
+    env_bucket = os.environ.get(ENV_VARS['oss_bucket_name'])
+    if env_bucket:
+        OSS_CONFIG['bucket_name'] = env_bucket
+
+    env_endpoint = os.environ.get(ENV_VARS['oss_endpoint'])
+    if env_endpoint:
+        OSS_CONFIG['endpoint'] = env_endpoint
+
+    env_cdn = os.environ.get(ENV_VARS['oss_cdn_domain'])
+    if env_cdn:
+        OSS_CONFIG['cdn_domain'] = env_cdn
+
+    # Hexo root
+    env_hexo_root = os.environ.get(ENV_VARS['hexo_root'])
+    if env_hexo_root:
+        HEXO_ROOT = Path(env_hexo_root)
+        print(f"✓ 使用环境变量 {ENV_VARS['hexo_root']}")
+
 
 # 启动时加载配置
 load_config()
@@ -106,27 +200,152 @@ def print_step(step_num, message):
     print(f"{'='*60}")
 
 
-def run_hexo_command(command, cwd=None):
-    """运行Hexo命令"""
+def request_with_retry(method, url, **kwargs):
+    """
+    Make HTTP request with timeout and exponential backoff retry.
+
+    Args:
+        method: 'get', 'post', etc.
+        url: Target URL
+        **kwargs: Additional arguments passed to requests (headers, stream, etc.)
+                  Special kwarg 'timeout_type' can be 'api' or 'image'
+
+    Returns:
+        Response object
+
+    Raises:
+        requests.RequestException: After all retries exhausted
+    """
+    # Determine timeout based on request type
+    timeout_type = kwargs.pop('timeout_type', 'api')
+    timeout = TIMEOUT_IMAGE if timeout_type == 'image' else TIMEOUT_API
+
+    # Ensure timeout is always set
+    kwargs.setdefault('timeout', timeout)
+
+    last_exception = None
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = getattr(requests, method)(url, **kwargs)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.Timeout as e:
+            last_exception = e
+            wait_time = RETRY_BACKOFF ** attempt
+            print(f"请求超时 (尝试 {attempt + 1}/{MAX_RETRIES}), {wait_time}秒后重试...")
+            time.sleep(wait_time)
+        except requests.exceptions.ConnectionError as e:
+            last_exception = e
+            wait_time = RETRY_BACKOFF ** attempt
+            print(f"连接错误 (尝试 {attempt + 1}/{MAX_RETRIES}), {wait_time}秒后重试...")
+            time.sleep(wait_time)
+        except requests.exceptions.HTTPError as e:
+            # Don't retry client errors (4xx), only server errors (5xx)
+            if e.response is not None and 400 <= e.response.status_code < 500:
+                raise  # Re-raise immediately for client errors
+            last_exception = e
+            wait_time = RETRY_BACKOFF ** attempt
+            print(f"服务器错误 (尝试 {attempt + 1}/{MAX_RETRIES}), {wait_time}秒后重试...")
+            time.sleep(wait_time)
+
+    # All retries exhausted
+    if last_exception is not None:
+        raise last_exception
+    raise requests.exceptions.RequestException(f"Request failed after {MAX_RETRIES} retries")
+
+
+def find_hexo_executable():
+    """
+    Find the hexo executable path.
+
+    Returns:
+        str: Path to hexo executable, or None if not found
+    """
+    # First, try shutil.which (uses PATH)
+    hexo_path = shutil.which('hexo')
+    if hexo_path:
+        return hexo_path
+
+    # Try common npm global paths
+    npm_paths = [
+        Path.home() / '.npm-global' / 'bin' / 'hexo',
+        Path.home() / '.nvm' / 'versions' / 'node',  # NVM installs
+        Path('/usr/local/bin/hexo'),
+        Path('/opt/homebrew/bin/hexo'),
+    ]
+
+    for p in npm_paths:
+        if p.exists() and p.is_file():
+            return str(p)
+
+    # Check for npx as fallback (npx hexo always works if npm is installed)
+    npx_path = shutil.which('npx')
+    if npx_path:
+        return None  # Signal to use npx instead
+
+    return None
+
+
+def run_hexo_command(command_args, cwd=None):
+    """
+    运行Hexo命令 (安全版本，不使用shell)
+
+    Args:
+        command_args: 命令参数列表，如 ['hexo', 'new', 'Title']
+                      或者字符串形式的简单命令如 'hexo generate'
+        cwd: 工作目录，默认为 HEXO_ROOT
+
+    Returns:
+        (success: bool, output: str)
+    """
     if cwd is None:
         cwd = HEXO_ROOT
 
-    full_command = f"cd {cwd} && {command}"
-    print(f"执行命令: {command}")
+    # Convert string command to list if needed (for simple commands)
+    if isinstance(command_args, str):
+        # Only allow simple commands without user input to use string form
+        command_list = shlex.split(command_args)
+    else:
+        command_list = list(command_args)
 
-    result = subprocess.run(
-        full_command,
-        shell=True,
-        capture_output=True,
-        text=True
-    )
+    # Find hexo executable and replace 'hexo' with full path
+    if command_list and command_list[0] == 'hexo':
+        hexo_path = find_hexo_executable()
+        if hexo_path:
+            command_list[0] = hexo_path
+        else:
+            # Fall back to npx hexo
+            npx_path = shutil.which('npx')
+            if npx_path:
+                command_list = [npx_path, 'hexo'] + command_list[1:]
+            # else: keep 'hexo' and let FileNotFoundError be raised
 
-    if result.returncode != 0:
-        print(f"错误: {result.stderr}")
-        return False, result.stderr
+    print(f"执行命令: {' '.join(command_list)}")
 
-    print(f"成功: {result.stdout}")
-    return True, result.stdout
+    try:
+        result = subprocess.run(
+            command_list,
+            cwd=str(cwd),  # Use cwd parameter instead of cd &&
+            capture_output=True,
+            text=True,
+            # shell=False is the default, explicitly noted for clarity
+        )
+
+        if result.returncode != 0:
+            print(f"错误: {result.stderr}")
+            return False, result.stderr
+
+        print(f"成功: {result.stdout}")
+        return True, result.stdout
+
+    except FileNotFoundError:
+        error_msg = f"命令未找到: {command_list[0]}。请确保hexo-cli已安装 (npm install -g hexo-cli)。"
+        print(f"错误: {error_msg}")
+        return False, error_msg
+    except Exception as e:
+        print(f"错误: {str(e)}")
+        return False, str(e)
 
 
 def sanitize_filename(filename):
@@ -178,13 +397,7 @@ def upload_to_oss(file_path, object_name=None):
     Returns:
         上传后的URL
     """
-    try:
-        import oss2
-    except ImportError:
-        print("正在安装阿里云OSS SDK...")
-        subprocess.run([sys.executable, '-m', 'pip', 'install', 'oss2', '--break-system-packages'],
-                      capture_output=True)
-        import oss2
+    import oss2
 
     if object_name is None:
         object_name = os.path.basename(file_path)
@@ -248,8 +461,7 @@ def download_notion_image(image_url, save_dir):
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
     }
 
-    response = requests.get(image_url, headers=headers, stream=True)
-    response.raise_for_status()
+    response = request_with_retry('get', image_url, headers=headers, stream=True, timeout_type='image')
 
     with open(filepath, 'wb') as f:
         for chunk in response.iter_content(chunk_size=8192):
@@ -319,8 +531,7 @@ def fetch_notion_page(page_id):
 
     # 获取页面属性
     page_url = f'https://api.notion.com/v1/pages/{page_id}'
-    page_response = requests.get(page_url, headers=headers)
-    page_response.raise_for_status()
+    page_response = request_with_retry('get', page_url, headers=headers, timeout_type='api')
     page_data = page_response.json()
 
     # 提取标题和属性
@@ -365,8 +576,7 @@ def fetch_notion_page(page_id):
 
     # 获取页面内容块
     blocks_url = f'https://api.notion.com/v1/blocks/{page_id}/children'
-    blocks_response = requests.get(blocks_url, headers=headers)
-    blocks_response.raise_for_status()
+    blocks_response = request_with_retry('get', blocks_url, headers=headers, timeout_type='api')
     blocks_data = blocks_response.json()
 
     # 转换为Markdown (简化版本)
@@ -460,8 +670,8 @@ def blocks_to_markdown(blocks, headers, level=0):
         # 处理子块
         if block.get('has_children'):
             children_url = f"https://api.notion.com/v1/blocks/{block['id']}/children"
-            children_response = requests.get(children_url, headers=headers)
-            if children_response.status_code == 200:
+            try:
+                children_response = request_with_retry('get', children_url, headers=headers, timeout_type='api')
                 children_data = children_response.json()
                 child_markdown = blocks_to_markdown(
                     children_data.get('results', []),
@@ -469,6 +679,9 @@ def blocks_to_markdown(blocks, headers, level=0):
                     level + 1
                 )
                 markdown.append(child_markdown)
+            except requests.RequestException as e:
+                print(f"警告: 获取子块失败: {e}")
+                # Continue processing other blocks
 
     return '\n'.join(markdown)
 
@@ -525,8 +738,8 @@ def create_hexo_post(title, content, tags, category, description, mathjax):
     print_step(1, f"创建Hexo文章: {title}")
 
     safe_title = sanitize_filename(title)
-    # 使用双引号包裹标题，避免特殊字符问题
-    success, output = run_hexo_command(f'hexo new "{safe_title}"')
+    # Pass title as separate argument to avoid shell injection
+    success, output = run_hexo_command(['hexo', 'new', safe_title])
 
     if not success:
         raise Exception(f"创建Hexo文章失败: {output}")
@@ -579,7 +792,6 @@ def create_hexo_post(title, content, tags, category, description, mathjax):
     print(f"文章已创建: {post_file}")
 
     # 清理临时目录
-    import shutil
     shutil.rmtree(temp_dir, ignore_errors=True)
 
     return post_file
@@ -793,7 +1005,6 @@ def main():
                 print(f"已删除旧文章: {existing_post}")
                 # Delete existing asset folder if it exists
                 if existing_asset_folder.exists() and existing_asset_folder.is_dir():
-                    import shutil
                     shutil.rmtree(existing_asset_folder)
                     print(f"已删除旧资源文件夹: {existing_asset_folder}")
 
@@ -823,10 +1034,21 @@ def main():
             print_step(5, "启动本地预览服务器")
             print("正在启动 hexo serve...")
 
-            import time
+            # Build the serve command using found hexo path
+            hexo_path = find_hexo_executable()
+            if hexo_path:
+                serve_cmd = [hexo_path, 'serve']
+            else:
+                # Fall back to npx hexo
+                npx_path = shutil.which('npx')
+                if npx_path:
+                    serve_cmd = [npx_path, 'hexo', 'serve']
+                else:
+                    serve_cmd = ['hexo', 'serve']  # Last resort, may fail
+
             serve_process = subprocess.Popen(
-                f"cd {HEXO_ROOT} && hexo serve",
-                shell=True,
+                serve_cmd,
+                cwd=str(HEXO_ROOT),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
@@ -836,7 +1058,10 @@ def main():
 
             # 检查服务器是否成功启动
             if serve_process.poll() is not None:
-                print("警告: hexo serve 启动失败")
+                # Server failed to start, capture and display error
+                _, stderr = serve_process.communicate()
+                error_msg = stderr.decode() if stderr else "未知错误"
+                print(f"警告: hexo serve 启动失败: {error_msg}")
             else:
                 print("\n" + "="*60)
                 print("本地预览服务器已启动!")

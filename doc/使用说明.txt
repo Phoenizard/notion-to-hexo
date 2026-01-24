@@ -46,7 +46,7 @@ Notion配置:
     - CDN域名
 
 Python依赖:
-  pip install requests oss2 --break-system-packages
+  pip install -r requirements.txt
 
 
 🎯 工作流做什么

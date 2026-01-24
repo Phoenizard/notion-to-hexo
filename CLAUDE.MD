@@ -341,7 +341,7 @@ print(f"DEBUG: Blocks data: {json.dumps(blocks_data, indent=2)}")
 1. Clone repository
 2. Copy `config.example.json` → `config.json`
 3. Fill in credentials (Notion token, OSS keys, blog path)
-4. Install dependencies: `pip install requests oss2 --break-system-packages`
+4. Install dependencies: `pip install -r requirements.txt`
 5. Run: `python publish_notion.py <notion_url>`
 
 ### System Requirements
