@@ -1,0 +1,95 @@
+====================================
+Notion to Hexo 博客发布工作流
+快速使用指南
+====================================
+
+📁 文件位置
+-----------
+工作流: /Users/shay/Workplace/notion-to-hexo/
+博客:   /Users/shay/Documents/Blog/
+
+
+⚡ 快速使用（3步）
+------------------
+
+1️⃣ 首次配置（只需一次）
+   cd /Users/shay/Workplace/notion-to-hexo
+   cp config.example.json config.json
+   # 编辑 config.json 填入：
+   #   - Notion Token
+   #   - 阿里云OSS配置（从PicGo获取）
+   #   - Blog路径: /Users/shay/Documents/Blog
+
+2️⃣ 发布文章
+   cd /Users/shay/Documents/Workplace/notion-to-hexo
+   python publish_notion.py <notion_page_url>
+
+3️⃣ 审查并部署
+   cd /Users/shay/Documents/Blog
+   hexo server      # 本地预览
+   hexo deploy      # 确认后部署
+
+
+📋 前置要求
+-----------
+
+Notion配置:
+  1. https://www.notion.so/my-integrations 创建Integration
+  2. 复制Token（secret_开头）
+  3. 重要！对每个页面：点击 "•••" > "Add connections"
+
+阿里云OSS配置:
+  从PicGo获取：
+    - Access Key ID / Secret
+    - Bucket名称
+    - Endpoint
+    - CDN域名
+
+Python依赖:
+  pip install requests oss2 --break-system-packages
+
+
+🎯 工作流做什么
+---------------
+
+自动完成:
+  ✅ hexo new [name]
+  ✅ 从Notion获取内容
+  ✅ 上传图片到OSS
+  ✅ 转换Markdown
+  ✅ hexo generate
+
+需要你做:
+  ⏸️ 本地预览 (hexo server)
+  ⏸️ 确认部署 (hexo deploy)
+
+
+📚 详细文档
+-----------
+README.md              - 主文档
+QUICKSTART.md          - 快速开始
+README_WORKFLOW.md     - 详细说明
+
+
+❓ 常见问题
+-----------
+
+Q: "object_not_found"
+A: 在Notion页面添加Connection授权
+
+Q: 图片上传失败
+A: 检查config.json中的OSS配置
+
+Q: Blog路径错误
+A: 修改config.json中的hexo.blog_path
+
+
+🔐 安全提醒
+-----------
+⚠️ config.json包含敏感信息，请勿提交到Git
+⚠️ 已添加到.gitignore，但仍需注意
+
+
+====================================
+更新时间: 2025-01-24
+====================================

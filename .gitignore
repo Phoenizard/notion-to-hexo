@@ -1,0 +1,25 @@
+# 敏感配置文件
+config.json
+
+# Python
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+
+# 临时文件
+temp_images/
+*.log
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 测试文件
+test_*.py
+*.test.py

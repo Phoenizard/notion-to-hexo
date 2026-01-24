@@ -1,0 +1,20 @@
+{
+  "notion": {
+    "token": "secret_your_notion_integration_token_here",
+    "comment": "从 https://www.notion.so/my-integrations 获取"
+  },
+  "oss": {
+    "access_key_id": "your_access_key_id",
+    "access_key_secret": "your_access_key_secret",
+    "bucket_name": "your-bucket-name",
+    "endpoint": "oss-cn-hangzhou.aliyuncs.com",
+    "cdn_domain": "your-bucket.oss-cn-hangzhou.aliyuncs.com",
+    "comment": "从PicGo配置或阿里云控制台获取"
+  },
+  "hexo": {
+    "blog_path": "/Users/shay/Documents/Blog",
+    "default_category": "学习笔记",
+    "default_tags": [],
+    "comment": "Hexo博客路径和默认配置"
+  }
+}
