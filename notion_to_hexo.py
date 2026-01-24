@@ -722,17 +722,18 @@ def rich_text_to_markdown(rich_text_array):
     return ''.join(result)
 
 
-def create_hexo_post(title, content, tags, category, description, mathjax):
+def create_hexo_post(title, content, tags, category, description, mathjax, front_title=None):
     """
     创建Hexo博客文章
 
     Args:
-        title: 文章标题
+        title: 文章标题 (用于hexo new命令生成文件名)
         content: Markdown内容
         tags: 标签列表
         category: 分类
         description: 描述
         mathjax: 是否启用mathjax
+        front_title: 前端显示标题 (用于front matter,默认与title相同)
     """
     # 1. 使用hexo new创建文章
     print_step(1, f"创建Hexo文章: {title}")
@@ -751,8 +752,9 @@ def create_hexo_post(title, content, tags, category, description, mathjax):
         raise Exception(f"找不到创建的文章文件: {post_file}")
 
     # 3. 准备front matter
+    # Use front_title for display if provided, otherwise use title
     front_matter = {
-        'title': title,
+        'title': front_title if front_title else title,
         'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'tags': tags,
         'categories': category,
@@ -797,17 +799,18 @@ def create_hexo_post(title, content, tags, category, description, mathjax):
     return post_file
 
 
-def test_mode_export(title, content, tags, category, description, mathjax):
+def test_mode_export(title, content, tags, category, description, mathjax, front_title=None):
     """
     Test mode: Export markdown to test folder without running Hexo commands
 
     Args:
-        title: Article title
+        title: Article title (used for filename)
         content: Markdown content
         tags: Tags list
         category: Category
         description: Description
         mathjax: Whether to enable mathjax
+        front_title: Display title for front matter (defaults to title)
 
     Returns:
         Path to the created test file
@@ -817,8 +820,9 @@ def test_mode_export(title, content, tags, category, description, mathjax):
     test_dir.mkdir(exist_ok=True)
 
     # Prepare front matter
+    # Use front_title for display if provided, otherwise use title
     front_matter = {
-        'title': title,
+        'title': front_title if front_title else title,
         'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'tags': tags,
         'categories': category,
@@ -980,6 +984,12 @@ def main():
         print(f"分类: {category}")
         print(f"MathJax: {mathjax}")
 
+        # Ask user for front_title (display title in front matter)
+        front_title_input = input("请输入前端显示标题 (留空则使用文章标题): ").strip()
+        front_title = front_title_input if front_title_input else title
+        if front_title != title:
+            print(f"前端标题: {front_title}")
+
         # Checkpoint: Show content preview and ask for confirmation
         print(f"\n内容预览 (前50字符):")
         print(f"  {content[:50]}...")
@@ -1011,7 +1021,7 @@ def main():
         if test_mode:
             # Test mode: export to test folder without Hexo commands
             print_step(1, "导出Markdown到测试目录")
-            test_file = test_mode_export(title, content, tags, category, description, mathjax)
+            test_file = test_mode_export(title, content, tags, category, description, mathjax, front_title)
 
             # 完成
             print("\n" + "="*60)
@@ -1021,7 +1031,7 @@ def main():
             print(f"\n注意: 测试模式下图片URL保持原始Notion链接,未上传到OSS")
         else:
             # 6. 创建Hexo文章
-            post_file = create_hexo_post(title, content, tags, category, description, mathjax)
+            post_file = create_hexo_post(title, content, tags, category, description, mathjax, front_title)
 
             # 7. 生成静态文件
             print_step(4, "生成Hexo静态文件")
