@@ -73,7 +73,7 @@ hexo deploy
 
 ### Python依赖
 ```bash
-pip install requests oss2 --break-system-packages
+pip install -r requirements.txt
 ```
 
 ## 📝 Notion页面属性建议

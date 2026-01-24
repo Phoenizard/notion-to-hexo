@@ -19,26 +19,28 @@
 ```bash
 cd /Users/shay/Documents/Workplace/notion-to-hexo
 
-# 复制配置模板
-cp config.example.json config.json
+# 推荐：使用 .env 存储敏感信息
+cp .env.example .env
+# 编辑 .env，填入 Notion Token、OSS 密钥
 
-# 编辑配置文件
-# 填入 Notion Token、阿里云OSS配置、Blog路径
+# 可选：使用 config.json 存储非敏感配置
+cp config.example.json config.json
+# 编辑 config.json，填入 blog_path 等非敏感配置
 ```
 
-**config.json 示例:**
+**.env 文件（存储敏感信息）:**
+```bash
+NOTION_TOKEN=secret_your_token_here
+NOTION_OSS_ACCESS_KEY_ID=your_access_key_id
+NOTION_OSS_ACCESS_KEY_SECRET=your_access_key_secret
+NOTION_OSS_BUCKET_NAME=your-bucket-name
+NOTION_OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com
+NOTION_OSS_CDN_DOMAIN=your-bucket.oss-cn-hangzhou.aliyuncs.com
+```
+
+**config.json 示例（仅非敏感配置）:**
 ```json
 {
-  "notion": {
-    "token": "secret_your_token_here"
-  },
-  "oss": {
-    "access_key_id": "LTAI5t...",
-    "access_key_secret": "your_secret",
-    "bucket_name": "phoenizard-picgo",
-    "endpoint": "oss-cn-hangzhou.aliyuncs.com",
-    "cdn_domain": "phoenizard-picgo.oss-cn-hangzhou.aliyuncs.com"
-  },
   "hexo": {
     "blog_path": "/Users/shay/Documents/Blog",
     "default_category": "学习笔记"
@@ -46,10 +48,12 @@ cp config.example.json config.json
 }
 ```
 
+> **配置优先级**: 环境变量 > config.json > 默认值
+
 ### 2. 安装依赖
 
 ```bash
-pip install requests oss2 --break-system-packages
+pip install -r requirements.txt
 ```
 
 ### 3. 发布文章
@@ -127,7 +131,10 @@ hexo deploy
 notion-to-hexo/
 ├── notion_to_hexo.py        # 核心工作流脚本
 ├── publish_notion.py         # 简化启动脚本（支持配置文件）
-├── config.example.json       # 配置文件模板
+├── requirements.txt          # Python 依赖列表
+├── .env.example              # 环境变量模板（敏感配置）
+├── .env                      # 实际环境变量（不提交到Git）
+├── config.example.json       # 配置文件模板（非敏感配置）
 ├── config.json              # 实际配置（不提交到Git）
 ├── README.md                # 本文档
 ├── QUICKSTART.md            # 快速开始指南
@@ -203,7 +210,7 @@ hexo deploy
 
 ### Q2: 图片上传失败
 **原因**: OSS配置错误
-**解决**: 检查`config.json`中的OSS配置，确认权限正确
+**解决**: 检查 `.env` 中的 OSS 配置（Access Key ID/Secret），确认权限正确
 
 ### Q3: Blog路径错误
 **原因**: config.json中的blog_path配置不正确
@@ -217,9 +224,11 @@ hexo deploy
 
 ## 🔐 安全提醒
 
-- ✅ `config.json` 包含敏感信息，**请勿提交到Git**
-- ✅ 建议使用环境变量存储密钥
-- ✅ 定期轮换阿里云Access Key
+- ⚠️ **必须使用 `.env` 文件存储敏感密钥**（Token、Access Key Secret）
+- ✅ `.env` 和 `config.json` 已添加到 `.gitignore`，不会被提交
+- ✅ `config.json` 仅用于非敏感配置（如 `blog_path`、`default_category`）
+- ✅ 定期轮换阿里云 Access Key
+- ✅ 配置优先级：环境变量 > config.json > 默认值
 
 ## 📚 更多文档
 
@@ -275,13 +284,30 @@ hexo deploy
 ## 📞 获取帮助
 
 遇到问题？
-1. 检查`config.json`配置
-2. 确认Notion Integration授权
-3. 验证Blog路径正确
-4. 查看详细文档
+1. 检查 `.env` 中的敏感配置（Token、OSS密钥）
+2. 检查 `config.json` 中的非敏感配置（blog_path）
+3. 确认 Notion Integration 授权
+4. 验证 Blog 路径正确
+5. 查看详细文档
 
 ---
 
 **版本**: 1.0
 **作者**: Phoenizard
 **最后更新**: 2025-01-24
+
+## TODO List
+
+- **高（网络与执行安全）**
+  - 在所有网络调用使用 `requests.Session()` + `Retry`（重试与指数退避）并为所有请求设置 `timeout`。
+  - 修复 Notion API 分页：在拉取 page children 和 block children 时循环处理 `next_cursor`/`has_more`。
+  - 避免 `shell=True` 与字符串拼接执行 `hexo`；使用参数列表和 `cwd`，并解析 `hexo new` 的实际输出以定位新文件。
+
+- **中（可扩展性与健壮性）**
+  - 使用 bounded `ThreadPoolExecutor` 并发处理图片的下载与上传，限制并发数并汇报失败。
+  - 用标准 `logging` 替换 `print()`，并在关键位置记录错误上下文与堆栈。
+  - 明确错误分类（可重试 vs 致命），不要在顶层吞掉所有异常。
+
+- **低（工程质量）**
+  - 添加 `requirements.txt`，并在 README 更新安装步骤（移除 `--break-system-packages` 建议）。
+  - 为 `rich_text_to_markdown()`、`blocks_to_markdown()` 和图片处理编写单元测试（使用小型 Notion block fixtures）。

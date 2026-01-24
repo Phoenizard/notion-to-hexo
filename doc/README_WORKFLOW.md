@@ -57,8 +57,8 @@
 ### 3. 安装Python依赖
 
 ```bash
-cd /path/to/your/Blog
-pip install requests oss2 --break-system-packages
+cd /path/to/notion-to-hexo
+pip install -r requirements.txt
 ```
 
 ## 使用方法
