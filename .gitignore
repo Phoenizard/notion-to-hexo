@@ -1,5 +1,6 @@
 # 敏感配置文件
 config.json
+page_url.txt
 
 # Python
 *.pyc
@@ -23,3 +24,4 @@ temp_images/
 # 测试文件
 test_*.py
 *.test.py
+test/

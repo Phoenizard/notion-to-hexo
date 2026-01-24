@@ -13,7 +13,7 @@ Notion to Hexo Blog Publisher
 4. 上传图片到阿里云OSS
 5. 生成Hexo静态文件 (hexo generate)
 
-“https://www.notion.so/Draft-Space-2f1508490108809a875cd47c93dec8f4?source=copy_link”
+"https://www.notion.so/Test-Page-2f25084901088002b209f3fc4f8c4a3c?source=copy_link"
 """
 
 import os
@@ -143,13 +143,27 @@ def sanitize_filename(filename):
 
 def extract_notion_page_id(url):
     """从Notion URL中提取页面ID"""
-    # Notion URL格式: https://www.notion.so/Title-abc123def456...
-    # 页面ID是最后一个32位十六进制字符串
-    match = re.search(r'([a-f0-9]{32})', url.replace('-', ''))
+    # Remove query parameters first
+    url_path = url.split('?')[0]
+
+    # Try to match 32 hex chars at the end of the path (most reliable)
+    match = re.search(r'([a-f0-9]{32})$', url_path, re.IGNORECASE)
     if match:
-        page_id = match.group(1)
-        # 格式化为标准UUID格式
+        page_id = match.group(1).lower()
         return f"{page_id[:8]}-{page_id[8:12]}-{page_id[12:16]}-{page_id[16:20]}-{page_id[20:]}"
+
+    # Try UUID format with dashes at the end
+    match = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$', url_path, re.IGNORECASE)
+    if match:
+        return match.group(1).lower()
+
+    # Fallback: remove dashes from end segment only and look for 32 hex chars
+    last_segment = url_path.split('/')[-1].replace('-', '')
+    match = re.search(r'([a-f0-9]{32})$', last_segment, re.IGNORECASE)
+    if match:
+        page_id = match.group(1).lower()
+        return f"{page_id[:8]}-{page_id[8:12]}-{page_id[12:16]}-{page_id[16:20]}-{page_id[20:]}"
+
     return None
 
 
@@ -464,6 +478,14 @@ def rich_text_to_markdown(rich_text_array):
     result = []
 
     for text_obj in rich_text_array:
+        text_type = text_obj.get('type', 'text')
+
+        # Handle inline equations
+        if text_type == 'equation':
+            expression = text_obj.get('equation', {}).get('expression', '')
+            result.append(f"${expression}$")
+            continue
+
         text = text_obj.get('plain_text', '')
         annotations = text_obj.get('annotations', {})
         href = text_obj.get('href')
@@ -563,16 +585,79 @@ def create_hexo_post(title, content, tags, category, description, mathjax):
     return post_file
 
 
+def test_mode_export(title, content, tags, category, description, mathjax):
+    """
+    Test mode: Export markdown to test folder without running Hexo commands
+
+    Args:
+        title: Article title
+        content: Markdown content
+        tags: Tags list
+        category: Category
+        description: Description
+        mathjax: Whether to enable mathjax
+
+    Returns:
+        Path to the created test file
+    """
+    # Create test folder
+    test_dir = Path(__file__).parent / 'test'
+    test_dir.mkdir(exist_ok=True)
+
+    # Prepare front matter
+    front_matter = {
+        'title': title,
+        'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'tags': tags,
+        'categories': category,
+        'mathjax': mathjax,
+    }
+
+    if description:
+        front_matter['description'] = description
+
+    # Generate filename
+    safe_title = sanitize_filename(title)
+    test_file = test_dir / f'{safe_title}.md'
+
+    # Write file
+    with open(test_file, 'w', encoding='utf-8') as f:
+        # Write front matter
+        f.write('---\n')
+        for key, value in front_matter.items():
+            if isinstance(value, list):
+                f.write(f'{key}: [{", ".join(value)}]\n')
+            elif isinstance(value, bool):
+                f.write(f'{key}: {str(value).lower()}\n')
+            else:
+                f.write(f'{key}: {value}\n')
+        f.write('---\n\n')
+
+        # Write content (without image processing in test mode)
+        f.write(content)
+
+    print(f"测试文件已创建: {test_file}")
+    return test_file
+
+
 def main():
     """主函数"""
     global HEXO_ROOT
 
+    # Check for test mode flag
+    test_mode = '--test' in sys.argv
+    if test_mode:
+        sys.argv.remove('--test')
+
     print("="*60)
-    print("Notion to Hexo Blog Publisher")
+    if test_mode:
+        print("Notion to Hexo Blog Publisher (TEST MODE)")
+    else:
+        print("Notion to Hexo Blog Publisher")
     print("="*60)
 
-    # 0. 检查并设置Hexo路径
-    if not HEXO_ROOT.exists():
+    # 0. 检查并设置Hexo路径 (skip in test mode)
+    if not test_mode and not HEXO_ROOT.exists():
         print(f"\n警告: 默认Blog路径不存在: {HEXO_ROOT}")
         custom_path = input("请输入你的Hexo博客路径 (或按Enter跳过): ").strip()
         if custom_path:
@@ -581,11 +666,25 @@ def main():
                 print(f"错误: 路径不存在: {HEXO_ROOT}")
                 sys.exit(1)
 
-    print(f"Blog路径: {HEXO_ROOT}\n")
+    if not test_mode:
+        print(f"Blog路径: {HEXO_ROOT}\n")
+    else:
+        test_dir = Path(__file__).parent / 'test'
+        print(f"测试输出目录: {test_dir}\n")
 
     # 1. 获取Notion页面URL
     if len(sys.argv) < 2:
-        notion_url = input("\n请输入Notion页面URL: ").strip()
+        # Try to read from page_url.txt
+        page_url_file = Path(__file__).parent / 'page_url.txt'
+        if page_url_file.exists():
+            with open(page_url_file, 'r', encoding='utf-8') as f:
+                notion_url = f.read().strip()
+            if notion_url:
+                print(f"从 page_url.txt 读取URL: {notion_url}")
+            else:
+                notion_url = input("\n请输入Notion页面URL: ").strip()
+        else:
+            notion_url = input("\n请输入Notion页面URL: ").strip()
     else:
         notion_url = sys.argv[1]
 
@@ -602,33 +701,36 @@ def main():
     if not NOTION_TOKEN:
         NOTION_TOKEN = input("\n请输入Notion Integration Token: ").strip()
 
-    # 4. 配置阿里云OSS
-    # 检查OSS配置是否已经从配置文件加载
-    if not OSS_CONFIG['access_key_id']:
-        print("\n配置阿里云OSS")
-        print("(留空则从PicGo配置读取,或跳过此步骤)")
+    # 4. 配置阿里云OSS (skip in test mode)
+    if not test_mode:
+        # 检查OSS配置是否已经从配置文件加载
+        if not OSS_CONFIG['access_key_id']:
+            print("\n配置阿里云OSS")
+            print("(留空则从PicGo配置读取,或跳过此步骤)")
 
-        access_key = input("Access Key ID: ").strip()
-        if access_key:
-            OSS_CONFIG['access_key_id'] = access_key
-            OSS_CONFIG['access_key_secret'] = input("Access Key Secret: ").strip()
-            OSS_CONFIG['bucket_name'] = input("Bucket名称: ").strip()
-            OSS_CONFIG['endpoint'] = input("Endpoint (如: oss-cn-hangzhou.aliyuncs.com): ").strip()
-            OSS_CONFIG['cdn_domain'] = input("CDN域名 (如: your-bucket.oss-cn-hangzhou.aliyuncs.com): ").strip()
+            access_key = input("Access Key ID: ").strip()
+            if access_key:
+                OSS_CONFIG['access_key_id'] = access_key
+                OSS_CONFIG['access_key_secret'] = input("Access Key Secret: ").strip()
+                OSS_CONFIG['bucket_name'] = input("Bucket名称: ").strip()
+                OSS_CONFIG['endpoint'] = input("Endpoint (如: oss-cn-hangzhou.aliyuncs.com): ").strip()
+                OSS_CONFIG['cdn_domain'] = input("CDN域名 (如: your-bucket.oss-cn-hangzhou.aliyuncs.com): ").strip()
+            else:
+                # 尝试从示例文章中推断OSS配置
+                OSS_CONFIG['cdn_domain'] = 'phoenizard-picgo.oss-cn-hangzhou.aliyuncs.com'
+                print(f"使用默认CDN域名: {OSS_CONFIG['cdn_domain']}")
+                print("请手动配置OSS认证信息...")
+                OSS_CONFIG['access_key_id'] = input("Access Key ID: ").strip()
+                OSS_CONFIG['access_key_secret'] = input("Access Key Secret: ").strip()
+                OSS_CONFIG['bucket_name'] = input("Bucket名称: ").strip()
+                OSS_CONFIG['endpoint'] = input("Endpoint: ").strip()
         else:
-            # 尝试从示例文章中推断OSS配置
-            OSS_CONFIG['cdn_domain'] = 'phoenizard-picgo.oss-cn-hangzhou.aliyuncs.com'
-            print(f"使用默认CDN域名: {OSS_CONFIG['cdn_domain']}")
-            print("请手动配置OSS认证信息...")
-            OSS_CONFIG['access_key_id'] = input("Access Key ID: ").strip()
-            OSS_CONFIG['access_key_secret'] = input("Access Key Secret: ").strip()
-            OSS_CONFIG['bucket_name'] = input("Bucket名称: ").strip()
-            OSS_CONFIG['endpoint'] = input("Endpoint: ").strip()
+            print("\n✓ 使用已配置的阿里云OSS设置")
+            print(f"  CDN域名: {OSS_CONFIG['cdn_domain']}")
+            print(f"  Bucket: {OSS_CONFIG['bucket_name']}")
+            print(f"  Endpoint: {OSS_CONFIG['endpoint']}")
     else:
-        print("\n✓ 使用已配置的阿里云OSS设置")
-        print(f"  CDN域名: {OSS_CONFIG['cdn_domain']}")
-        print(f"  Bucket: {OSS_CONFIG['bucket_name']}")
-        print(f"  Endpoint: {OSS_CONFIG['endpoint']}")
+        print("\n✓ 测试模式: 跳过OSS配置")
 
     try:
         # 5. 获取Notion内容
@@ -666,24 +768,65 @@ def main():
         print(f"分类: {category}")
         print(f"MathJax: {mathjax}")
 
-        # 6. 创建Hexo文章
-        post_file = create_hexo_post(title, content, tags, category, description, mathjax)
+        # Checkpoint: Show content preview and ask for confirmation
+        print(f"\n内容预览 (前50字符):")
+        print(f"  {content[:50]}...")
 
-        # 7. 生成静态文件
-        print_step(4, "生成Hexo静态文件")
-        success, output = run_hexo_command("hexo generate")
+        confirm = input("\n确认继续创建Hexo文章? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("已取消操作")
+            sys.exit(0)
 
-        if not success:
-            print(f"警告: 生成静态文件时出现错误")
+        # Check for existing post with same title (only in non-test mode)
+        if not test_mode:
+            safe_title = sanitize_filename(title)
+            existing_post = HEXO_ROOT / 'source' / '_posts' / f'{safe_title}.md'
+            existing_asset_folder = HEXO_ROOT / 'source' / '_posts' / safe_title
+            if existing_post.exists():
+                print(f"\n警告: 已存在同名文章: {existing_post}")
+                choice = input("是否替换现有文章? (y/n): ").strip().lower()
+                if choice != 'y':
+                    print("已取消操作")
+                    sys.exit(0)
+                # Delete existing post file
+                existing_post.unlink()
+                print(f"已删除旧文章: {existing_post}")
+                # Delete existing asset folder if it exists
+                if existing_asset_folder.exists() and existing_asset_folder.is_dir():
+                    import shutil
+                    shutil.rmtree(existing_asset_folder)
+                    print(f"已删除旧资源文件夹: {existing_asset_folder}")
 
-        # 8. 完成
-        print("\n" + "="*60)
-        print("发布完成!")
-        print("="*60)
-        print(f"文章文件: {post_file}")
-        print(f"\n请检查文章内容,确认无误后运行:")
-        print(f"  cd {HEXO_ROOT}")
-        print(f"  hexo deploy")
+        if test_mode:
+            # Test mode: export to test folder without Hexo commands
+            print_step(1, "导出Markdown到测试目录")
+            test_file = test_mode_export(title, content, tags, category, description, mathjax)
+
+            # 完成
+            print("\n" + "="*60)
+            print("测试导出完成!")
+            print("="*60)
+            print(f"测试文件: {test_file}")
+            print(f"\n注意: 测试模式下图片URL保持原始Notion链接,未上传到OSS")
+        else:
+            # 6. 创建Hexo文章
+            post_file = create_hexo_post(title, content, tags, category, description, mathjax)
+
+            # 7. 生成静态文件
+            print_step(4, "生成Hexo静态文件")
+            success, _ = run_hexo_command("hexo generate")
+
+            if not success:
+                print(f"警告: 生成静态文件时出现错误")
+
+            # 8. 完成
+            print("\n" + "="*60)
+            print("发布完成!")
+            print("="*60)
+            print(f"文章文件: {post_file}")
+            print(f"\n请检查文章内容,确认无误后运行:")
+            print(f"  cd {HEXO_ROOT}")
+            print(f"  hexo deploy")
 
     except Exception as e:
         print(f"\n错误: {str(e)}")
