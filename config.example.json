@@ -1,0 +1,13 @@
+{
+  "hexo": {
+    "blog_path": "/path/to/your/hexo/blog",
+    "default_category": "",
+    "default_tags": [],
+    "default_title": "",
+    "default_description": "",
+    "default_mathjax": false
+  },
+  "llm": {
+    "dashscope_api_key": ""
+  }
+}
