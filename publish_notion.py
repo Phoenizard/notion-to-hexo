@@ -5,6 +5,7 @@
 
 使用方法:
     python publish_notion.py <notion_url>
+    python publish_notion.py --test <notion_url>
 """
 
 import os
@@ -12,9 +13,9 @@ import sys
 import json
 from pathlib import Path
 
-# 导入主脚本
-sys.path.insert(0, str(Path(__file__).parent))
-import notion_to_hexo
+# Import from the package
+from notion_to_hexo import config, main as run_main
+
 
 def load_config():
     """加载配置文件"""
@@ -26,48 +27,50 @@ def load_config():
         return None
 
     with open(config_file, 'r', encoding='utf-8') as f:
-        config = json.load(f)
+        file_config = json.load(f)
 
-    return config
+    return file_config
+
 
 def main():
-    # 加载配置
-    config = load_config()
+    # Load configuration
+    file_config = load_config()
 
-    if config:
-        # 设置Hexo博客路径 - 仅当环境变量未设置时
-        if config.get('hexo', {}).get('blog_path'):
+    if file_config:
+        # Set Hexo blog path - only if not already set via environment
+        if file_config.get('hexo', {}).get('blog_path'):
             if not os.environ.get('HEXO_ROOT'):
-                blog_path = Path(config['hexo']['blog_path'])
+                blog_path = Path(file_config['hexo']['blog_path'])
                 if blog_path.exists():
-                    notion_to_hexo.HEXO_ROOT = blog_path
+                    config.hexo_root = blog_path
                 else:
                     print(f"警告: 配置的blog_path不存在: {blog_path}")
 
-        # 设置Notion token - 仅当环境变量未设置时
-        if config.get('notion', {}).get('token'):
+        # Set Notion token - only if not already set via environment
+        if file_config.get('notion', {}).get('token'):
             if not os.environ.get('NOTION_TOKEN'):
-                notion_to_hexo.NOTION_TOKEN = config['notion']['token']
-                os.environ['NOTION_TOKEN'] = config['notion']['token']
+                config.notion_token = file_config['notion']['token']
+                os.environ['NOTION_TOKEN'] = file_config['notion']['token']
 
-        # 设置OSS配置 - 仅当环境变量未设置时
-        if config.get('oss'):
-            oss_config = config['oss']
+        # Set OSS configuration - only if not already set via environment
+        if file_config.get('oss'):
+            oss_config = file_config['oss']
             if not os.environ.get('NOTION_OSS_ACCESS_KEY_ID'):
-                notion_to_hexo.OSS_CONFIG['access_key_id'] = oss_config.get('access_key_id', '')
+                config.oss_config['access_key_id'] = oss_config.get('access_key_id', '')
             if not os.environ.get('NOTION_OSS_ACCESS_KEY_SECRET'):
-                notion_to_hexo.OSS_CONFIG['access_key_secret'] = oss_config.get('access_key_secret', '')
+                config.oss_config['access_key_secret'] = oss_config.get('access_key_secret', '')
             if not os.environ.get('NOTION_OSS_BUCKET_NAME'):
-                notion_to_hexo.OSS_CONFIG['bucket_name'] = oss_config.get('bucket_name', '')
+                config.oss_config['bucket_name'] = oss_config.get('bucket_name', '')
             if not os.environ.get('NOTION_OSS_ENDPOINT'):
-                notion_to_hexo.OSS_CONFIG['endpoint'] = oss_config.get('endpoint', '')
+                config.oss_config['endpoint'] = oss_config.get('endpoint', '')
             if not os.environ.get('NOTION_OSS_CDN_DOMAIN'):
-                notion_to_hexo.OSS_CONFIG['cdn_domain'] = oss_config.get('cdn_domain', '')
+                config.oss_config['cdn_domain'] = oss_config.get('cdn_domain', '')
 
         print("✓ 已从配置文件加载设置\n")
 
-    # 运行主程序
-    notion_to_hexo.main()
+    # Run the main workflow
+    run_main()
+
 
 if __name__ == '__main__':
     main()

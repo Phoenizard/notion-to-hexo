@@ -6,7 +6,7 @@
 
 **Purpose**: Streamline the workflow of publishing content from Notion to a Hexo static blog, handling markdown conversion, image hosting, and front matter generation automatically.
 
-**Tech Stack**: Python 3, Notion API, Aliyun OSS SDK, Hexo CLI
+**Tech Stack**: Python 3, Notion API, Aliyun OSS SDK, Aliyun DashScope (LLM), Hexo CLI
 
 **Language**: Mixed Chinese/English (documentation in Chinese, code comments in English)
 
@@ -14,55 +14,107 @@
 
 ## Architecture
 
-### Project Structure
+### Project Structure (v2.0 - Modular)
 
 ```
 notion-to-hexo/
-├── notion_to_hexo.py         # Core workflow engine (main script)
-├── publish_notion.py          # Simplified launcher with config support
-├── config.json               # User configuration (gitignored, sensitive)
-├── config.example.json       # Configuration template
-├── README.md                 # Main documentation (Chinese)
-├── QUICKSTART.md            # Quick start guide
-├── README_WORKFLOW.md       # Detailed workflow documentation
-├── NOTION_WORKFLOW_SUMMARY.md # Workflow summary
-└── CLAUDE.MD                # This file - AI assistant guide
+├── notion_to_hexo/               # Main package directory
+│   ├── __init__.py               # Package initialization, exports public API
+│   ├── config.py                 # Configuration management
+│   ├── network.py                # Network utilities (retry, timeouts)
+│   ├── hexo.py                   # Hexo-related utilities
+│   ├── oss.py                    # Aliyun OSS image handling
+│   ├── notion.py                 # Notion API integration
+│   ├── converter.py              # Markdown conversion logic
+│   └── cli.py                    # Command-line interface and main workflow
+│
+├── notion_to_hexo.py             # Backwards-compatible entry point (thin wrapper)
+├── publish_notion.py             # Simplified launcher with config support
+├── config.json                   # User configuration (gitignored, sensitive)
+├── config.example.json           # Configuration template
+├── README.md                     # Main documentation (Chinese)
+├── QUICKSTART.md                 # Quick start guide
+├── README_WORKFLOW.md            # Detailed workflow documentation
+├── NOTION_WORKFLOW_SUMMARY.md    # Workflow summary
+└── CLAUDE.MD                     # This file - AI assistant guide
+```
+
+### Module Responsibilities
+
+| Module | Purpose | Key Functions |
+|--------|---------|---------------|
+| `config.py` | Configuration management | `load_config()`, `Config` class, constants |
+| `network.py` | HTTP with retry/timeout | `request_with_retry()` |
+| `hexo.py` | Hexo CLI interaction | `run_hexo_command()`, `sanitize_filename()`, `find_hexo_executable()` |
+| `oss.py` | Image upload to Aliyun OSS | `upload_to_oss()`, `download_notion_image()`, `process_images_in_markdown()` |
+| `notion.py` | Notion API client | `fetch_notion_page()`, `extract_notion_page_id()` |
+| `converter.py` | Notion blocks to Markdown | `blocks_to_markdown()`, `rich_text_to_markdown()` |
+| `cli.py` | Main workflow & CLI | `main()`, `create_hexo_post()`, `test_mode_export()`, `generate_summary_with_llm()` |
+
+### Dependency Flow (No Circular Dependencies)
+
+```
+config.py       <- base, no dependencies
+    ^
+network.py      <- depends on config
+    ^
+converter.py    <- depends on network
+    ^
+notion.py       <- depends on network, config, converter
+    ^
+oss.py          <- depends on network, config
+    ^
+hexo.py         <- depends on config only
+    ^
+cli.py          <- depends on all above
 ```
 
 ### Key Components
 
-#### 1. **notion_to_hexo.py** (697 lines)
-The main workflow engine containing:
+#### 1. **notion_to_hexo/** (Package)
 
-- **Configuration Management** (lines 31-98)
-  - `load_config()`: Loads settings from config.json
-  - Global configs: `HEXO_ROOT`, `NOTION_TOKEN`, `OSS_CONFIG`, `HEXO_CONFIG`
+##### config.py
+- `Config` class: Holds all configuration as instance attributes
+- `config`: Global config instance
+- `load_config()`: Loads settings from config.json and environment variables
+- `dashscope_api_key`: DashScope API key for LLM summary generation
+- Network constants: `TIMEOUT_API`, `TIMEOUT_IMAGE`, `MAX_RETRIES`, `RETRY_BACKOFF`
 
-- **Notion API Integration** (lines 289-366)
-  - `fetch_notion_page(page_id)`: Fetches page content and properties
-  - `blocks_to_markdown(blocks, headers, level)`: Converts Notion blocks to markdown
-  - `rich_text_to_markdown(rich_text_array)`: Handles text formatting
+##### network.py
+- `request_with_retry()`: HTTP requests with exponential backoff retry
 
-- **Image Processing** (lines 156-286)
-  - `download_notion_image(image_url, save_dir)`: Downloads images from Notion S3
-  - `upload_to_oss(file_path, object_name)`: Uploads to Aliyun OSS
-  - `process_images_in_markdown(content, temp_dir)`: Replaces image URLs in markdown
+##### hexo.py
+- `find_hexo_executable()`: Locates hexo binary
+- `run_hexo_command()`: Safely executes Hexo CLI commands
+- `sanitize_filename()`: Cleans filenames for filesystem compatibility
 
-- **Hexo Integration** (lines 490-563)
-  - `create_hexo_post(title, content, tags, category, description, mathjax)`: Creates Hexo article
-  - Uses `hexo new` command to create post template
-  - Generates front matter with metadata
+##### notion.py
+- `extract_notion_page_id()`: Extracts UUID from Notion URLs
+- `fetch_notion_page()`: Fetches page content and properties from Notion API
 
-- **Utility Functions** (lines 102-153)
-  - `sanitize_filename(filename)`: Cleans filenames for filesystem compatibility
-  - `extract_notion_page_id(url)`: Extracts UUID from Notion URLs
-  - `run_hexo_command(command, cwd)`: Executes Hexo CLI commands
+##### converter.py
+- `rich_text_to_markdown()`: Converts Notion rich text to Markdown
+- `blocks_to_markdown()`: Converts Notion blocks to Markdown
 
-#### 2. **publish_notion.py** (67 lines)
-Simplified launcher that:
-- Loads config.json before execution
-- Sets global variables in notion_to_hexo module
-- Provides better UX for configured environments
+##### oss.py
+- `upload_to_oss()`: Uploads files to Aliyun OSS
+- `download_notion_image()`: Downloads images from Notion S3
+- `process_images_in_markdown()`: Replaces image URLs in markdown
+
+##### cli.py
+- `main()`: Main entry point and workflow orchestration
+- `create_hexo_post()`: Creates Hexo article with front matter
+- `test_mode_export()`: Test mode export without Hexo commands
+- `print_step()`: Step formatting utility
+
+#### 2. **notion_to_hexo.py** (Backwards-Compatible Wrapper)
+- Thin wrapper that imports everything from the package
+- Maintains backwards compatibility for existing code
+- Exposes config attributes as module-level globals
+
+#### 3. **publish_notion.py**
+- Simplified launcher with config file support
+- Imports from the package directly
 
 ---
 
@@ -89,16 +141,34 @@ Simplified launcher that:
     "default_title": "",
     "default_description": "",
     "default_mathjax": false
+  },
+  "llm": {
+    "dashscope_api_key": "sk-xxx"  // Or use DASHSCOPE_API_KEY env var
   }
 }
 ```
 
 ### Configuration Loading Flow
 
-1. **publish_notion.py** loads config.json (lines 19-31)
-2. **notion_to_hexo.py** also loads config on import (lines 60-98)
-3. Missing values fall back to interactive prompts
-4. Environment variable `NOTION_TOKEN` can override config
+1. `config.py` loads .env file (if python-dotenv available)
+2. `config.py` loads config.json on module import
+3. Environment variables override config.json values
+4. Missing values fall back to interactive prompts in CLI
+
+### Accessing Configuration
+
+```python
+# New way (recommended)
+from notion_to_hexo import config
+print(config.hexo_root)
+print(config.notion_token)
+print(config.oss_config['bucket_name'])
+
+# Old way (backwards compatible)
+import notion_to_hexo
+print(notion_to_hexo.HEXO_ROOT)
+print(notion_to_hexo.NOTION_TOKEN)
+```
 
 ---
 
@@ -126,26 +196,26 @@ User Input (Notion URL)
 Manual review → `hexo deploy`
 ```
 
-### Code Flow (notion_to_hexo.py main())
+### Code Flow
 
 ```python
-main() (lines 566-693)
-  ├─ Set HEXO_ROOT path
-  ├─ Extract page_id from URL
+cli.main()
+  ├─ Load config (from config.py on import)
+  ├─ Extract page_id (notion.extract_notion_page_id)
   ├─ Validate NOTION_TOKEN
   ├─ Configure OSS credentials
-  ├─ fetch_notion_page()
-  │   ├─ GET /v1/pages/{page_id} → properties
-  │   ├─ GET /v1/blocks/{page_id}/children → content
-  │   └─ blocks_to_markdown() → content_markdown
-  ├─ create_hexo_post()
-  │   ├─ hexo new "{title}"
-  │   ├─ process_images_in_markdown()
-  │   │   ├─ download_notion_image() → temp file
-  │   │   ├─ upload_to_oss() → CDN URL
+  ├─ notion.fetch_notion_page()
+  │   ├─ network.request_with_retry() → page properties
+  │   ├─ network.request_with_retry() → content blocks
+  │   └─ converter.blocks_to_markdown() → content_markdown
+  ├─ cli.create_hexo_post()
+  │   ├─ hexo.run_hexo_command(['hexo', 'new', title])
+  │   ├─ oss.process_images_in_markdown()
+  │   │   ├─ oss.download_notion_image() → temp file
+  │   │   ├─ oss.upload_to_oss() → CDN URL
   │   │   └─ replace URL in markdown
   │   └─ Write front matter + content
-  └─ hexo generate
+  └─ hexo.run_hexo_command('hexo generate')
 ```
 
 ---
@@ -184,14 +254,14 @@ main() (lines 566-693)
 **Notion Image URLs**: Signed S3 URLs with expiration
 - Format: `https://prod-files-secure.s3.../workspace-uuid/image-uuid/filename.png?params`
 - **Important**: Don't add Authorization header (AWS rejects with 400)
-- UUID extracted from path for stable filenames (lines 210-226)
+- UUID extracted from path for stable filenames
 
-**OSS Upload Strategy**:
-- Check if object exists before upload (lines 185-188)
-- Prefix with `img/` for organization (line 179)
+**OSS Upload Strategy** (in `oss.py`):
+- Check if object exists before upload
+- Prefix with `img/` for organization
 - Return CDN URL for markdown replacement
 
-**Filename Generation** (lines 211-226):
+**Filename Generation**:
 ```python
 # Stable naming based on Notion image UUID
 image_uuid = path_parts[-2]  # e.g., c2dd9413-e1b4-4ee5-97b1-64b4292f82c3
@@ -201,8 +271,8 @@ filename = f"notion_{image_uuid[:8]}{ext}"
 ### Hexo Integration
 
 **File Creation**:
-- Uses `hexo new "{title}"` command (line 507)
-- Target: `{HEXO_ROOT}/source/_posts/{sanitized_title}.md`
+- Uses `hexo new "{title}"` command
+- Target: `{hexo_root}/source/_posts/{sanitized_title}.md`
 - Filename sanitization removes special chars: `<>:"/\|?*`
 
 **Front Matter Format**:
@@ -224,24 +294,24 @@ mathjax: true  # if math formulas detected
 ### When Modifying Code
 
 1. **Adding Block Type Support**:
-   - Edit `blocks_to_markdown()` (lines 368-459)
+   - Edit `converter.py` → `blocks_to_markdown()`
    - Add new `elif block_type == 'new_type':` case
    - Handle nested blocks with recursion if needed
 
 2. **Changing Image Processing**:
-   - Modify `download_notion_image()` for download logic
-   - Modify `upload_to_oss()` for upload logic
-   - Update `process_images_in_markdown()` for URL replacement
+   - Modify `oss.py` → `download_notion_image()` for download logic
+   - Modify `oss.py` → `upload_to_oss()` for upload logic
+   - Update `oss.py` → `process_images_in_markdown()` for URL replacement
 
 3. **Adding Configuration Options**:
    - Update `config.example.json` with new field
-   - Add to `load_config()` function
+   - Add to `config.py` → `Config` class and `load_config()` function
    - Document in README.md
 
 4. **Error Handling**:
-   - Notion API errors: Check response status codes
-   - OSS upload errors: Validate credentials in config
-   - Hexo command errors: Check `HEXO_ROOT` path exists
+   - Notion API errors: Check response status codes in `notion.py`
+   - OSS upload errors: Validate credentials in `oss.py`
+   - Hexo command errors: Check hexo_root path in `hexo.py`
 
 ### Code Style Conventions
 
@@ -264,7 +334,7 @@ mathjax: true  # if math formulas detected
 ### Adding a New Notion Property
 
 ```python
-# In fetch_notion_page() after line 350
+# In notion.py → fetch_notion_page()
 if 'CustomField' in properties:
     custom_property = properties['CustomField']
     if custom_property.get('type') == 'rich_text':
@@ -275,7 +345,7 @@ if 'CustomField' in properties:
 ### Supporting a New Block Type
 
 ```python
-# In blocks_to_markdown() after line 444
+# In converter.py → blocks_to_markdown()
 elif block_type == 'callout':
     icon = block_content.get('icon', {}).get('emoji', '💡')
     text = rich_text_to_markdown(block_content.get('rich_text', []))
@@ -286,8 +356,27 @@ elif block_type == 'callout':
 ### Changing Image Upload Path
 
 ```python
-# In upload_to_oss() line 179
+# In oss.py → upload_to_oss()
 object_name = f"blog/images/{object_name}"  # Instead of "img/"
+```
+
+### Using the Package Programmatically
+
+```python
+from notion_to_hexo import (
+    fetch_notion_page,
+    extract_notion_page_id,
+    upload_to_oss,
+    config
+)
+
+# Configure
+config.notion_token = "your_token"
+config.oss_config['access_key_id'] = "your_key"
+
+# Use
+page_id = extract_notion_page_id("https://notion.so/...")
+title, content, tags, category, desc, mathjax = fetch_notion_page(page_id)
 ```
 
 ---
@@ -298,12 +387,12 @@ object_name = f"blog/images/{object_name}"  # Instead of "img/"
 
 1. **Test with sample Notion page**:
    ```bash
-   python publish_notion.py "https://www.notion.so/Test-Page-xxx"
+   python publish_notion.py --test "https://www.notion.so/Test-Page-xxx"
    ```
 
 2. **Verify outputs**:
-   - [ ] Markdown file created in `_posts/`
-   - [ ] Images uploaded to OSS
+   - [ ] Markdown file created in `test/` (test mode) or `_posts/`
+   - [ ] Images uploaded to OSS (non-test mode)
    - [ ] CDN URLs in markdown
    - [ ] Front matter correct
 
@@ -317,7 +406,8 @@ object_name = f"blog/images/{object_name}"  # Instead of "img/"
 
 **Notion API Issues**:
 ```python
-# Add verbose logging in fetch_notion_page()
+# Add verbose logging in notion.py → fetch_notion_page()
+import json
 print(f"DEBUG: Page data: {json.dumps(page_data, indent=2)}")
 print(f"DEBUG: Blocks data: {json.dumps(blocks_data, indent=2)}")
 ```
@@ -329,7 +419,7 @@ print(f"DEBUG: Blocks data: {json.dumps(blocks_data, indent=2)}")
 
 **Hexo Command Failures**:
 - Ensure `hexo-cli` installed globally
-- Check `HEXO_ROOT` points to valid Hexo project
+- Check `config.hexo_root` points to valid Hexo project
 - Run `hexo version` manually to verify
 
 ---
@@ -359,7 +449,7 @@ print(f"DEBUG: Blocks data: {json.dumps(blocks_data, indent=2)}")
 ### When Helping Users
 
 1. **Always check config.json exists** before debugging
-2. **Verify HEXO_ROOT path** - common source of errors
+2. **Verify hexo_root path** - common source of errors
 3. **Check Notion Integration authorization** - users forget this step
 4. **OSS credentials** - must have upload permission, not just read
 
@@ -369,6 +459,7 @@ print(f"DEBUG: Blocks data: {json.dumps(blocks_data, indent=2)}")
 2. **Don't break config compatibility** - users have existing config.json
 3. **Maintain workflow steps** - users expect specific output messages
 4. **Keep interactive prompts** - fallback when config missing
+5. **Respect module boundaries** - keep dependencies flowing downward
 
 ### Common User Issues
 
@@ -392,8 +483,6 @@ print(f"DEBUG: Blocks data: {json.dumps(blocks_data, indent=2)}")
 
 ## Git Workflow
 
-**Current Branch**: `claude/update-claude-md-BbLJ8`
-
 **Commit Conventions**:
 - `feat:` New features
 - `fix:` Bug fixes
@@ -403,11 +492,23 @@ print(f"DEBUG: Blocks data: {json.dumps(blocks_data, indent=2)}")
 **Never Commit**:
 - `config.json` (contains secrets)
 - `temp_images/` directory
+- `test/` directory
 - User-specific paths in code
 
 ---
 
 ## Version History
+
+- **v2.1** (2025-01-25): LLM Summary Feature
+  - Added DashScope API integration for article summary generation
+  - New `generate_summary_with_llm()` function in cli.py
+  - Added `dashscope_api_key` to Config class
+
+- **v2.0** (2025-01-25): Modular refactoring
+  - Split monolithic script into package structure
+  - Improved code organization and maintainability
+  - Added Config class for better configuration management
+  - Maintained backwards compatibility
 
 - **v1.0** (2025-01-24): Initial release
   - Notion API integration
@@ -422,6 +523,12 @@ print(f"DEBUG: Blocks data: {json.dumps(blocks_data, indent=2)}")
 ### Entry Points
 - **With config**: `python publish_notion.py <url>`
 - **Interactive**: `python notion_to_hexo.py <url>`
+- **Test mode**: `python publish_notion.py --test <url>`
+
+### Importing from Package
+```python
+from notion_to_hexo import fetch_notion_page, upload_to_oss, config
+```
 
 ### Key Functions
 - `fetch_notion_page(page_id)` - Get content from Notion
@@ -441,6 +548,6 @@ print(f"DEBUG: Blocks data: {json.dumps(blocks_data, indent=2)}")
 
 ---
 
-**Last Updated**: 2025-01-24
+**Last Updated**: 2025-01-25
 **Maintained By**: Phoenizard
 **For**: AI assistants working with this codebase
