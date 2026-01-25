@@ -36,6 +36,7 @@ NOTION_OSS_ACCESS_KEY_SECRET=your_access_key_secret
 NOTION_OSS_BUCKET_NAME=your-bucket-name
 NOTION_OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com
 NOTION_OSS_CDN_DOMAIN=your-bucket.oss-cn-hangzhou.aliyuncs.com
+DASHSCOPE_API_KEY=sk-your_dashscope_api_key_here
 ```
 
 **config.json 示例（仅非敏感配置）:**
@@ -88,6 +89,7 @@ hexo deploy
 | 2 | 从Notion获取内容和图片 | ✅ 自动 |
 | 3 | 上传图片到阿里云OSS图床 | ✅ 自动 |
 | 4 | 转换为Markdown格式 | ✅ 自动 |
+| 4.5 | 使用LLM生成文章摘要 | ✅ 可选（需配置DashScope API） |
 | 5 | 生成Front Matter | ✅ 自动 |
 | 6 | `hexo generate` 生成静态文件 | ✅ 自动 |
 | 7 | `hexo deploy` 部署 | ⏸️ 手动审查 |
@@ -273,6 +275,10 @@ hexo deploy
 ```
 
 ## 📝 更新日志
+
+- **v2.1** (2025-01-25)
+  - ✅ 新增LLM摘要生成功能（阿里云百炼 DashScope API）
+  - ✅ 支持自动生成150-250字文章摘要
 
 - **v1.0** (2025-01-24)
   - ✅ 初始版本
