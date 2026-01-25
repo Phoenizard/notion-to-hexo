@@ -2,22 +2,20 @@
 
 自动将Notion笔记发布到Hexo博客的Python工具。
 
-## 📁 项目位置
+## 特性
 
-- **工作流文件**: `/Users/shay/Documents/Workplace/notion-to-hexo/`
-- **博客项目**: `/Users/shay/Documents/Blog/`
-
-这样设计的好处：
-- ✅ Blog项目保持纯净，不受工作流文件干扰
-- ✅ 工作流可以独立管理和版本控制
-- ✅ 可以同时管理多个Hexo博客项目
+- ✅ 自动从Notion获取页面内容
+- ✅ 自动上传图片到阿里云OSS图床
+- ✅ 自动转换为Hexo兼容的Markdown格式
+- ✅ 支持LLM自动生成文章摘要（可选）
+- ✅ 独立工作目录，不影响博客项目
 
 ## ⚡ 快速开始
 
 ### 1. 配置（首次使用）
 
 ```bash
-cd /Users/shay/Documents/Workplace/notion-to-hexo
+cd notion-to-hexo
 
 # 推荐：使用 .env 存储敏感信息
 cp .env.example .env
@@ -28,23 +26,23 @@ cp config.example.json config.json
 # 编辑 config.json，填入 blog_path 等非敏感配置
 ```
 
-**.env 文件（存储敏感信息）:**
+**.env 文件:**
 ```bash
 NOTION_TOKEN=secret_your_token_here
 NOTION_OSS_ACCESS_KEY_ID=your_access_key_id
 NOTION_OSS_ACCESS_KEY_SECRET=your_access_key_secret
 NOTION_OSS_BUCKET_NAME=your-bucket-name
-NOTION_OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com
-NOTION_OSS_CDN_DOMAIN=your-bucket.oss-cn-hangzhou.aliyuncs.com
+NOTION_OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com # 以阿里云为例
+NOTION_OSS_CDN_DOMAIN=your-bucket.oss-cn-hangzhou.aliyuncs.com # 以阿里云为例
 DASHSCOPE_API_KEY=sk-your_dashscope_api_key_here
 ```
 
-**config.json 示例（仅非敏感配置）:**
+**config.json:**
 ```json
 {
   "hexo": {
-    "blog_path": "/Users/shay/Documents/Blog",
-    "default_category": "学习笔记"
+    "blog_path": "Path/To/Blog",
+    "default_category": ""
   }
 }
 ```
@@ -60,7 +58,7 @@ pip install -r requirements.txt
 ### 3. 发布文章
 
 ```bash
-cd /Users/shay/Documents/Workplace/notion-to-hexo
+cd /Path/To/notion-to-hexo
 
 # 使用配置文件（推荐）
 python publish_notion.py <notion_page_url>
@@ -72,7 +70,7 @@ python notion_to_hexo.py <notion_page_url>
 ### 4. 审查并部署
 
 ```bash
-cd /Users/shay/Documents/Blog
+cd /path/to/your/hexo/blog
 
 # 预览
 hexo server
@@ -110,11 +108,11 @@ hexo deploy
 
 ### 阿里云OSS配置
 
-从PicGo中获取以下信息：
+从阿里云控制台或PicGo中获取以下信息：
 - Access Key ID / Secret
 - Bucket名称
 - Endpoint（如: `oss-cn-hangzhou.aliyuncs.com`）
-- CDN域名（如: `phoenizard-picgo.oss-cn-hangzhou.aliyuncs.com`）
+- CDN域名（如: `your-bucket.oss-cn-hangzhou.aliyuncs.com`）
 
 ### Notion页面属性（可选）
 
@@ -127,21 +125,25 @@ hexo deploy
 | Description | Text | 文章描述 |
 | MathJax | Checkbox | 数学公式支持 |
 
-## 📦 文件说明
+## 📦 项目结构
 
 ```
 notion-to-hexo/
-├── notion_to_hexo.py        # 核心工作流脚本
-├── publish_notion.py         # 简化启动脚本（支持配置文件）
-├── requirements.txt          # Python 依赖列表
-├── .env.example              # 环境变量模板（敏感配置）
-├── .env                      # 实际环境变量（不提交到Git）
-├── config.example.json       # 配置文件模板（非敏感配置）
-├── config.json              # 实际配置（不提交到Git）
-├── README.md                # 本文档
-├── QUICKSTART.md            # 快速开始指南
-├── README_WORKFLOW.md       # 详细使用文档
-└── NOTION_WORKFLOW_SUMMARY.md  # 工作流摘要
+├── notion_to_hexo/           # 主程序包
+│   ├── __init__.py           # 包初始化，导出公共API
+│   ├── config.py             # 配置管理
+│   ├── network.py            # 网络工具（重试、超时）
+│   ├── hexo.py               # Hexo相关工具
+│   ├── oss.py                # 阿里云OSS图片处理
+│   ├── notion.py             # Notion API集成
+│   ├── converter.py          # Markdown转换逻辑
+│   └── cli.py                # 命令行接口和主流程
+├── notion_to_hexo.py         # 向后兼容入口
+├── publish_notion.py         # 简化启动脚本
+├── requirements.txt          # Python依赖列表
+├── .env.example              # 环境变量模板
+├── config.example.json       # 配置文件模板
+└── README.md                 # 本文档
 ```
 
 ## 🔧 支持的Notion内容
@@ -174,11 +176,10 @@ notion-to-hexo/
 # 3. 复制页面URL
 # 4. 运行发布脚本
 
-cd /Users/shay/Documents/Workplace/notion-to-hexo
 python publish_notion.py "https://www.notion.so/My-Article-abc123"
 
 # 5. 预览和部署
-cd /Users/shay/Documents/Blog
+cd /path/to/your/hexo/blog
 hexo server
 hexo deploy
 ```
@@ -194,13 +195,12 @@ https://www.notion.so/Article-3-xxx
 EOF
 
 # 批量发布
-cd /Users/shay/Documents/Workplace/notion-to-hexo
 while read url; do
     python publish_notion.py "$url"
 done < urls.txt
 
 # 统一部署
-cd /Users/shay/Documents/Blog
+cd /path/to/your/hexo/blog
 hexo deploy
 ```
 
@@ -232,12 +232,6 @@ hexo deploy
 - ✅ 定期轮换阿里云 Access Key
 - ✅ 配置优先级：环境变量 > config.json > 默认值
 
-## 📚 更多文档
-
-- **快速开始**: `QUICKSTART.md`
-- **详细文档**: `README_WORKFLOW.md`
-- **工作流摘要**: `NOTION_WORKFLOW_SUMMARY.md`
-
 ## 🚀 工作流程图
 
 ```
@@ -247,18 +241,18 @@ hexo deploy
              │
              ▼
 ┌─────────────────────────────────┐
-│  /Users/shay/Documents/         │
-│  Workplace/notion-to-hexo/      │
+│  notion-to-hexo/                │
 │  python publish_notion.py       │
 └────────────┬────────────────────┘
              │
              ├─> 获取Notion内容
              ├─> 下载并上传图片到OSS
              ├─> 转换为Markdown
+             ├─> (可选) LLM生成摘要
              │
              ▼
 ┌─────────────────────────────────┐
-│  /Users/shay/Documents/Blog/    │
+│  your-hexo-blog/                │
 │  source/_posts/文章名.md        │
 └────────────┬────────────────────┘
              │
@@ -294,26 +288,10 @@ hexo deploy
 2. 检查 `config.json` 中的非敏感配置（blog_path）
 3. 确认 Notion Integration 授权
 4. 验证 Blog 路径正确
-5. 查看详细文档
+5. 提交 [Issue](https://github.com/Phoenizard/notion-to-hexo/issues)
 
 ---
 
-**版本**: 1.0
+**版本**: 2.1
 **作者**: Phoenizard
-**最后更新**: 2025-01-24
-
-## TODO List
-
-- **高（网络与执行安全）**
-  - 在所有网络调用使用 `requests.Session()` + `Retry`（重试与指数退避）并为所有请求设置 `timeout`。
-  - 修复 Notion API 分页：在拉取 page children 和 block children 时循环处理 `next_cursor`/`has_more`。
-  - 避免 `shell=True` 与字符串拼接执行 `hexo`；使用参数列表和 `cwd`，并解析 `hexo new` 的实际输出以定位新文件。
-
-- **中（可扩展性与健壮性）**
-  - 使用 bounded `ThreadPoolExecutor` 并发处理图片的下载与上传，限制并发数并汇报失败。
-  - 用标准 `logging` 替换 `print()`，并在关键位置记录错误上下文与堆栈。
-  - 明确错误分类（可重试 vs 致命），不要在顶层吞掉所有异常。
-
-- **低（工程质量）**
-  - 添加 `requirements.txt`，并在 README 更新安装步骤（移除 `--break-system-packages` 建议）。
-  - 为 `rich_text_to_markdown()`、`blocks_to_markdown()` 和图片处理编写单元测试（使用小型 Notion block fixtures）。
+**最后更新**: 2025-01-25
