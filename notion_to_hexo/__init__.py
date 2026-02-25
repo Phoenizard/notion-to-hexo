@@ -11,10 +11,19 @@ Usage:
 from .config import (
     config,
     load_config,
+    get_config,
     TIMEOUT_API,
     TIMEOUT_IMAGE,
     MAX_RETRIES,
     RETRY_BACKOFF,
+)
+
+from .exceptions import (
+    NotionToHexoError,
+    NotionAPIError,
+    OSSUploadError,
+    HexoCommandError,
+    ConfigurationError,
 )
 
 from .network import request_with_retry
@@ -52,10 +61,17 @@ __all__ = [
     # Config
     'config',
     'load_config',
+    'get_config',
     'TIMEOUT_API',
     'TIMEOUT_IMAGE',
     'MAX_RETRIES',
     'RETRY_BACKOFF',
+    # Exceptions
+    'NotionToHexoError',
+    'NotionAPIError',
+    'OSSUploadError',
+    'HexoCommandError',
+    'ConfigurationError',
     # Network
     'request_with_retry',
     # Hexo
@@ -79,4 +95,4 @@ __all__ = [
     'print_step',
 ]
 
-__version__ = '2.0.0'
+__version__ = '3.0.0'

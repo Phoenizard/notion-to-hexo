@@ -7,14 +7,23 @@ Provides the main entry point and workflow orchestration.
 import sys
 import time
 import shutil
+import logging
+import argparse
 import subprocess
 from pathlib import Path
 from datetime import datetime
 
-from .config import config, load_config
+import yaml
+
+from .config import config, get_config, load_config
 from .hexo import run_hexo_command, sanitize_filename, find_hexo_executable
 from .notion import fetch_notion_page, extract_notion_page_id
 from .oss import process_images_in_markdown
+from .exceptions import (
+    NotionAPIError, OSSUploadError, HexoCommandError, ConfigurationError
+)
+
+logger = logging.getLogger(__name__)
 
 
 def print_step(step_num, message):
@@ -24,9 +33,31 @@ def print_step(step_num, message):
     print(f"{'='*60}")
 
 
+def _build_front_matter(front_matter):
+    """
+    Build YAML front matter string.
+
+    Uses PyYAML to properly escape special characters in titles
+    and other fields, preventing invalid YAML output.
+
+    Args:
+        front_matter: Dictionary of front matter fields
+
+    Returns:
+        Complete front matter string with --- delimiters
+    """
+    content = yaml.dump(
+        front_matter,
+        default_flow_style=False,
+        allow_unicode=True,
+        sort_keys=False,
+    )
+    return f"---\n{content}---\n\n"
+
+
 def generate_summary_with_llm(content, front_title):
     """
-    Generate article summary using Aliyun 百炼 (DashScope) API.
+    Generate article summary using Aliyun DashScope API.
 
     Args:
         content: Full article content (markdown)
@@ -38,17 +69,14 @@ def generate_summary_with_llm(content, front_title):
     try:
         from dashscope import Generation
     except ImportError:
-        print("警告: dashscope 未安装，无法生成摘要")
-        print("请运行: pip install dashscope")
+        logger.warning("dashscope 未安装，无法生成摘要。请运行: pip install dashscope")
         return None
 
     api_key = config.dashscope_api_key
     if not api_key:
-        print("警告: DASHSCOPE_API_KEY 未配置")
-        print("请在 .env 文件中设置 DASHSCOPE_API_KEY")
+        logger.warning("DASHSCOPE_API_KEY 未配置")
         return None
 
-    # Build prompts
     title_context = f"标题：{front_title}\n\n" if front_title else ""
     user_prompt = f"""请为以下文章生成一段简洁的摘要（150-250字），用于博客文章的description字段。
 摘要应该：
@@ -78,10 +106,10 @@ def generate_summary_with_llm(content, front_title):
             summary = response.output.choices[0].message.content
             return summary.strip()
         else:
-            print(f"API 调用失败: {response.code} - {response.message}")
+            logger.error("API 调用失败: %s - %s", response.code, response.message)
             return None
     except Exception as e:
-        print(f"生成摘要时出错: {e}")
+        logger.error("生成摘要时出错: %s", e)
         return None
 
 
@@ -101,24 +129,20 @@ def create_hexo_post(title, content, tags, category, description, mathjax, front
     Returns:
         Path to the created post file
     """
-    # 1. Use hexo new to create the article
     print_step(1, f"创建Hexo文章: {title}")
 
     safe_title = sanitize_filename(title)
-    # Pass title as separate argument to avoid shell injection
     success, output = run_hexo_command(['hexo', 'new', safe_title])
 
     if not success:
-        raise Exception(f"创建Hexo文章失败: {output}")
+        raise HexoCommandError(f"创建Hexo文章失败: {output}")
 
-    # 2. Find the created file
     post_file = config.hexo_root / 'source' / '_posts' / f'{safe_title}.md'
 
     if not post_file.exists():
-        raise Exception(f"找不到创建的文章文件: {post_file}")
+        raise HexoCommandError(f"找不到创建的文章文件: {post_file}")
 
-    # 3. Prepare front matter
-    # Use front_title for display if provided, otherwise use title
+    # Prepare front matter
     front_matter = {
         'title': front_title if front_title else title,
         'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -130,38 +154,24 @@ def create_hexo_post(title, content, tags, category, description, mathjax, front
     if description:
         front_matter['description'] = description
 
-    # 4. Process images
+    # Process images
     print_step(2, "处理图片并上传到OSS")
-
-    # Create temporary directory
     temp_dir = config.hexo_root / 'temp_images'
     temp_dir.mkdir(exist_ok=True)
 
-    processed_content = process_images_in_markdown(content, temp_dir)
+    try:
+        processed_content = process_images_in_markdown(content, temp_dir)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
-    # 5. Write file
+    # Write file
     print_step(3, "写入Markdown文件")
 
     with open(post_file, 'w', encoding='utf-8') as f:
-        # Write front matter
-        f.write('---\n')
-        for key, value in front_matter.items():
-            if isinstance(value, list):
-                f.write(f'{key}: [{", ".join(value)}]\n')
-            elif isinstance(value, bool):
-                f.write(f'{key}: {str(value).lower()}\n')
-            else:
-                f.write(f'{key}: {value}\n')
-        f.write('---\n\n')
-
-        # Write content
+        f.write(_build_front_matter(front_matter))
         f.write(processed_content)
 
     print(f"文章已创建: {post_file}")
-
-    # Clean up temporary directory
-    shutil.rmtree(temp_dir, ignore_errors=True)
-
     return post_file
 
 
@@ -181,12 +191,9 @@ def test_mode_export(title, content, tags, category, description, mathjax, front
     Returns:
         Path to the created test file
     """
-    # Create test folder
     test_dir = Path(__file__).parent.parent / 'test'
     test_dir.mkdir(exist_ok=True)
 
-    # Prepare front matter
-    # Use front_title for display if provided, otherwise use title
     front_matter = {
         'title': front_title if front_title else title,
         'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -198,77 +205,159 @@ def test_mode_export(title, content, tags, category, description, mathjax, front
     if description:
         front_matter['description'] = description
 
-    # Generate filename
     safe_title = sanitize_filename(title)
     test_file = test_dir / f'{safe_title}.md'
 
-    # Write file
     with open(test_file, 'w', encoding='utf-8') as f:
-        # Write front matter
-        f.write('---\n')
-        for key, value in front_matter.items():
-            if isinstance(value, list):
-                f.write(f'{key}: [{", ".join(value)}]\n')
-            elif isinstance(value, bool):
-                f.write(f'{key}: {str(value).lower()}\n')
-            else:
-                f.write(f'{key}: {value}\n')
-        f.write('---\n\n')
-
-        # Write content (without image processing in test mode)
+        f.write(_build_front_matter(front_matter))
         f.write(content)
 
     print(f"测试文件已创建: {test_file}")
     return test_file
 
 
-def main():
+def _prompt(message, default='', yes_mode=False):
+    """
+    Prompt user for input, respecting --yes mode.
+
+    In --yes mode, returns the default value without prompting.
+    """
+    if yes_mode:
+        return default
+    return input(message).strip() or default
+
+
+def _confirm(message, yes_mode=False):
+    """
+    Ask user for y/n confirmation.
+
+    In --yes mode, returns True without prompting.
+    """
+    if yes_mode:
+        return True
+    return input(message).strip().lower() == 'y'
+
+
+def build_parser():
+    """Build argument parser."""
+    parser = argparse.ArgumentParser(
+        prog='notion-to-hexo',
+        description='将 Notion 页面转换为 Hexo 博客文章'
+    )
+
+    parser.add_argument('url', nargs='?', help='Notion 页面 URL')
+
+    # Mode flags
+    parser.add_argument('--test', action='store_true',
+                        help='测试模式：导出到 test/ 目录，不运行 Hexo 命令')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='预览模式：获取并转换内容，不写文件不上传')
+    parser.add_argument('--ui', action='store_true',
+                        help='启动 Streamlit Web 界面')
+
+    # Article metadata
+    parser.add_argument('--title', help='覆盖文章标题')
+    parser.add_argument('--front-title', help='前端显示标题（front matter 中的 title）')
+    parser.add_argument('--category', help='文章分类')
+    parser.add_argument('--tags', nargs='+', help='文章标签')
+    parser.add_argument('--description', help='文章描述/摘要')
+
+    # Behavior flags
+    parser.add_argument('-y', '--yes', action='store_true',
+                        help='非交互模式，跳过所有确认提示')
+    parser.add_argument('--no-serve', action='store_true',
+                        help='跳过本地预览服务器')
+    parser.add_argument('--deploy', action='store_true',
+                        help='自动部署到远程')
+    parser.add_argument('--llm-summary', action='store_true',
+                        help='使用 LLM 自动生成文章摘要')
+
+    # Configuration
+    parser.add_argument('--config', dest='config_path',
+                        help='指定配置文件路径')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='显示详细日志')
+
+    return parser
+
+
+def main(argv=None):
     """Main entry point."""
-    # Check for test mode flag
-    test_mode = '--test' in sys.argv
-    if test_mode:
-        sys.argv.remove('--test')
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
-    print("="*60)
-    if test_mode:
-        print("Notion to Hexo Blog Publisher (TEST MODE)")
-    else:
-        print("Notion to Hexo Blog Publisher")
-    print("="*60)
+    # Handle --ui: launch Streamlit
+    if args.ui:
+        app_path = Path(__file__).parent / 'app.py'
+        try:
+            subprocess.run(
+                [sys.executable, '-m', 'streamlit', 'run', str(app_path),
+                 '--server.headless', 'true'],
+                check=True
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("错误: 无法启动 Streamlit。请安装: pip install 'notion-to-hexo[ui]'")
+            sys.exit(1)
+        return
 
-    # 0. Check and set Hexo path (skip in test mode)
-    if not test_mode and not config.hexo_root.exists():
+    # Configure logging
+    log_level = logging.DEBUG if args.verbose else logging.WARNING
+    logging.basicConfig(
+        level=log_level,
+        format='%(name)s - %(levelname)s - %(message)s'
+    )
+
+    # Load configuration
+    get_config(args.config_path)
+
+    yes_mode = args.yes
+    test_mode = args.test
+    dry_run = args.dry_run
+
+    print("=" * 60)
+    mode_label = ""
+    if test_mode:
+        mode_label = " (TEST MODE)"
+    elif dry_run:
+        mode_label = " (DRY RUN)"
+    print(f"Notion to Hexo Blog Publisher{mode_label}")
+    print("=" * 60)
+
+    # Check Hexo path (skip in test/dry-run mode)
+    if not test_mode and not dry_run and not config.hexo_root.exists():
         print(f"\n警告: 默认Blog路径不存在: {config.hexo_root}")
-        custom_path = input("请输入你的Hexo博客路径 (或按Enter跳过): ").strip()
+        custom_path = _prompt("请输入你的Hexo博客路径 (或按Enter跳过): ", yes_mode=yes_mode)
         if custom_path:
             config.hexo_root = Path(custom_path)
             if not config.hexo_root.exists():
                 print(f"错误: 路径不存在: {config.hexo_root}")
                 sys.exit(1)
+        elif yes_mode:
+            raise ConfigurationError(f"Blog路径不存在: {config.hexo_root}")
 
-    if not test_mode:
+    if not test_mode and not dry_run:
         print(f"Blog路径: {config.hexo_root}\n")
-    else:
+    elif test_mode:
         test_dir = Path(__file__).parent.parent / 'test'
         print(f"测试输出目录: {test_dir}\n")
 
-    # 1. Get Notion page URL
-    if len(sys.argv) < 2:
-        # Try to read from page_url.txt
+    # Get Notion page URL
+    notion_url = args.url
+    if not notion_url:
         page_url_file = Path(__file__).parent.parent / 'page_url.txt'
         if page_url_file.exists():
             with open(page_url_file, 'r', encoding='utf-8') as f:
                 notion_url = f.read().strip()
             if notion_url:
                 print(f"从 page_url.txt 读取URL: {notion_url}")
-            else:
-                notion_url = input("\n请输入Notion页面URL: ").strip()
-        else:
-            notion_url = input("\n请输入Notion页面URL: ").strip()
-    else:
-        notion_url = sys.argv[1]
 
-    # 2. Extract page ID
+    if not notion_url:
+        if yes_mode:
+            print("错误: --yes 模式下必须提供 Notion URL")
+            sys.exit(1)
+        notion_url = input("\n请输入Notion页面URL: ").strip()
+
+    # Extract page ID
     page_id = extract_notion_page_id(notion_url)
     if not page_id:
         print("错误: 无法从URL中提取Notion页面ID")
@@ -276,14 +365,17 @@ def main():
 
     print(f"Notion页面ID: {page_id}")
 
-    # 3. Check Notion Token
+    # Check Notion Token
     if not config.notion_token:
+        if yes_mode:
+            raise ConfigurationError("NOTION_TOKEN 未配置")
         config.notion_token = input("\n请输入Notion Integration Token: ").strip()
 
-    # 4. Configure Aliyun OSS (skip in test mode)
-    if not test_mode:
-        # Check if OSS config is already loaded
+    # Configure OSS (skip in test/dry-run mode)
+    if not test_mode and not dry_run:
         if not config.oss_config['access_key_id']:
+            if yes_mode:
+                raise ConfigurationError("OSS 凭证未配置，--yes 模式下无法交互输入")
             print("\n配置阿里云OSS")
             print("(留空则从PicGo配置读取,或跳过此步骤)")
 
@@ -295,7 +387,6 @@ def main():
                 config.oss_config['endpoint'] = input("Endpoint (如: oss-cn-hangzhou.aliyuncs.com): ").strip()
                 config.oss_config['cdn_domain'] = input("CDN域名 (如: your-bucket.oss-cn-hangzhou.aliyuncs.com): ").strip()
             else:
-                # Try to infer OSS config from sample article
                 config.oss_config['cdn_domain'] = 'phoenizard-picgo.oss-cn-hangzhou.aliyuncs.com'
                 print(f"使用默认CDN域名: {config.oss_config['cdn_domain']}")
                 print("请手动配置OSS认证信息...")
@@ -304,38 +395,38 @@ def main():
                 config.oss_config['bucket_name'] = input("Bucket名称: ").strip()
                 config.oss_config['endpoint'] = input("Endpoint: ").strip()
         else:
-            print("\n✓ 使用已配置的阿里云OSS设置")
+            print("\n已使用配置的阿里云OSS设置")
             print(f"  CDN域名: {config.oss_config['cdn_domain']}")
             print(f"  Bucket: {config.oss_config['bucket_name']}")
             print(f"  Endpoint: {config.oss_config['endpoint']}")
     else:
-        print("\n✓ 测试模式: 跳过OSS配置")
+        print(f"\n{'测试' if test_mode else '预览'}模式: 跳过OSS配置")
 
     try:
-        # 5. Fetch Notion content
+        # Fetch Notion content
         print_step(0, "从Notion获取页面内容")
+        print("获取Notion页面内容...")
         try:
-            print("获取Notion页面内容...")
             notion_title, content, notion_tags, notion_category, notion_description, notion_mathjax = fetch_notion_page(page_id)
-        except Exception as e:
-            raise Exception(f"获取Notion页面失败: {str(e)}")
+        except NotionAPIError as e:
+            raise NotionAPIError(f"获取Notion页面失败: {e}") from e
 
-        # Use config values, fall back to Notion page values if config is empty
-        title = config.hexo_config['default_title'] or notion_title
-        tags = config.hexo_config['default_tags'] if config.hexo_config['default_tags'] else notion_tags
-        category = config.hexo_config['default_category'] or notion_category
-        description = config.hexo_config['default_description'] or notion_description
+        # Merge: CLI args > config defaults > Notion page values
+        title = args.title or config.hexo_config['default_title'] or notion_title
+        tags = args.tags or (config.hexo_config['default_tags'] if config.hexo_config['default_tags'] else notion_tags)
+        category = args.category or config.hexo_config['default_category'] or notion_category
+        description = args.description or config.hexo_config['default_description'] or notion_description
         mathjax = config.hexo_config['default_mathjax'] or notion_mathjax
 
-        # Prompt user for missing values
+        # Prompt for missing values
         if not title:
-            title = input("请输入文章标题: ").strip() or "无标题文章"
+            title = _prompt("请输入文章标题: ", "无标题文章", yes_mode)
         if not category:
-            category = input("请输入文章分类: ").strip() or "学习笔记"
-        if not tags:
+            category = _prompt("请输入文章分类: ", "学习笔记", yes_mode)
+        if not tags and not yes_mode:
             tags_input = input("请输入文章标签(逗号分隔): ").strip()
             tags = [tag.strip() for tag in tags_input.split(',')] if tags_input else []
-        if not mathjax:
+        if not mathjax and not yes_mode:
             mathjax_input = input("是否启用MathJax? (y/n): ").strip().lower()
             mathjax = (mathjax_input == 'y')
 
@@ -344,97 +435,131 @@ def main():
         print(f"分类: {category}")
         print(f"MathJax: {mathjax}")
 
-        # Ask user for front_title (display title in front matter)
-        front_title_input = input("请输入前端显示标题 (留空则使用文章标题): ").strip()
-        front_title = front_title_input if front_title_input else title
+        # Front title
+        front_title = args.front_title
+        if not front_title and not yes_mode:
+            front_title_input = input("请输入前端显示标题 (留空则使用文章标题): ").strip()
+            front_title = front_title_input if front_title_input else title
+        if not front_title:
+            front_title = title
         if front_title != title:
             print(f"前端标题: {front_title}")
 
-        # Ask about summary generation
-        generate_summary = input("\n是否需要生成摘要? (y/n): ").strip().lower()
-        if generate_summary == 'y':
-            # Try to generate summary with LLM
-            generated_description = generate_summary_with_llm(content, front_title)
-            if generated_description:
-                description = generated_description
+        # Summary generation
+        if args.llm_summary:
+            generated = generate_summary_with_llm(content, front_title)
+            if generated:
+                description = generated
                 print(f"生成的摘要: {description}")
+        elif not yes_mode:
+            generate_summary = input("\n是否需要生成摘要? (y/n): ").strip().lower()
+            if generate_summary == 'y':
+                generated = generate_summary_with_llm(content, front_title)
+                if generated:
+                    description = generated
+                    print(f"生成的摘要: {description}")
+                else:
+                    desc_input = input("请手动输入文章摘要 (留空则使用前端标题): ").strip()
+                    description = desc_input if desc_input else front_title
             else:
-                # LLM generation failed, fall back to manual input
-                description_input = input("请手动输入文章摘要 (留空则使用前端标题): ").strip()
-                description = description_input if description_input else front_title
-        else:
-            # User chose manual input
-            description_input = input("请输入文章摘要 (留空则使用前端标题): ").strip()
-            description = description_input if description_input else front_title
+                desc_input = input("请输入文章摘要 (留空则使用前端标题): ").strip()
+                description = desc_input if desc_input else front_title
 
         if description:
             print(f"摘要: {description}")
 
-        # Checkpoint: Show content preview and ask for confirmation
+        # Dry-run mode: show preview and exit
+        if dry_run:
+            front_matter = {
+                'title': front_title,
+                'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'tags': tags,
+                'categories': category,
+                'mathjax': mathjax,
+            }
+            if description:
+                front_matter['description'] = description
+
+            print("\n" + "=" * 60)
+            print("Front Matter 预览:")
+            print("=" * 60)
+            print(_build_front_matter(front_matter))
+            print(f"内容长度: {len(content)} 字符")
+            print(f"内容预览 (前200字符):")
+            print(f"  {content[:200]}...")
+            print("\n" + "=" * 60)
+            print("Dry-run 完成 - 未写入文件")
+            print("=" * 60)
+            return
+
+        # Content preview and confirmation
         print(f"\n内容预览 (前50字符):")
         print(f"  {content[:50]}...")
 
-        confirm = input("\n确认继续创建Hexo文章? (y/n): ").strip().lower()
-        if confirm != 'y':
+        if not _confirm("\n确认继续创建Hexo文章? (y/n): ", yes_mode):
             print("已取消操作")
             sys.exit(0)
 
-        # Check for existing post with same title (only in non-test mode)
+        # Check for existing post
         if not test_mode:
             safe_title = sanitize_filename(title)
             existing_post = config.hexo_root / 'source' / '_posts' / f'{safe_title}.md'
             existing_asset_folder = config.hexo_root / 'source' / '_posts' / safe_title
             if existing_post.exists():
                 print(f"\n警告: 已存在同名文章: {existing_post}")
-                choice = input("是否替换现有文章? (y/n): ").strip().lower()
-                if choice != 'y':
+                if not _confirm("是否替换现有文章? (y/n): ", yes_mode):
                     print("已取消操作")
                     sys.exit(0)
-                # Delete existing post file
                 existing_post.unlink()
                 print(f"已删除旧文章: {existing_post}")
-                # Delete existing asset folder if it exists
                 if existing_asset_folder.exists() and existing_asset_folder.is_dir():
                     shutil.rmtree(existing_asset_folder)
                     print(f"已删除旧资源文件夹: {existing_asset_folder}")
 
         if test_mode:
-            # Test mode: export to test folder without Hexo commands
             print_step(1, "导出Markdown到测试目录")
             test_file = test_mode_export(title, content, tags, category, description, mathjax, front_title)
 
-            # Done
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("测试导出完成!")
-            print("="*60)
+            print("=" * 60)
             print(f"测试文件: {test_file}")
             print(f"\n注意: 测试模式下图片URL保持原始Notion链接,未上传到OSS")
         else:
-            # 6. Create Hexo post
+            # Create Hexo post
             post_file = create_hexo_post(title, content, tags, category, description, mathjax, front_title)
 
-            # 7. Generate static files
+            # Generate static files
             print_step(4, "生成Hexo静态文件")
             success, _ = run_hexo_command("hexo generate")
 
             if not success:
                 print("警告: 生成静态文件时出现错误")
 
-            # 8. Start local preview server
+            if args.no_serve:
+                print(f"\n文章文件: {post_file}")
+                if args.deploy:
+                    print_step(5, "部署到远程")
+                    deploy_success, _ = run_hexo_command("hexo deploy")
+                    if deploy_success:
+                        print("\n部署完成!")
+                    else:
+                        print("警告: 部署时出现错误")
+                return
+
+            # Start local preview server
             print_step(5, "启动本地预览服务器")
             print("正在启动 hexo serve...")
 
-            # Build the serve command using found hexo path
             hexo_path = find_hexo_executable()
             if hexo_path:
                 serve_cmd = [hexo_path, 'serve']
             else:
-                # Fall back to npx hexo
                 npx_path = shutil.which('npx')
                 if npx_path:
                     serve_cmd = [npx_path, 'hexo', 'serve']
                 else:
-                    serve_cmd = ['hexo', 'serve']  # Last resort, may fail
+                    serve_cmd = ['hexo', 'serve']
 
             serve_process = subprocess.Popen(
                 serve_cmd,
@@ -443,28 +568,23 @@ def main():
                 stderr=subprocess.PIPE
             )
 
-            # Wait for server to start
             time.sleep(3)
 
-            # Check if server started successfully
             if serve_process.poll() is not None:
-                # Server failed to start, capture and display error
                 _, stderr = serve_process.communicate()
                 error_msg = stderr.decode() if stderr else "未知错误"
                 print(f"警告: hexo serve 启动失败: {error_msg}")
             else:
-                print("\n" + "="*60)
+                print("\n" + "=" * 60)
                 print("本地预览服务器已启动!")
-                print("="*60)
+                print("=" * 60)
                 print(f"文章文件: {post_file}")
                 print(f"\n预览地址: http://localhost:4000")
                 print("请在浏览器中检查文章内容")
-                print("="*60)
+                print("=" * 60)
 
-                # Ask whether to deploy
-                deploy_choice = input("\n确认部署到远程? (y/n): ").strip().lower()
+                deploy_choice = args.deploy or _confirm("\n确认部署到远程? (y/n): ", yes_mode=False)
 
-                # Stop preview server
                 print("\n正在停止预览服务器...")
                 serve_process.terminate()
                 try:
@@ -473,13 +593,13 @@ def main():
                     serve_process.kill()
                 print("预览服务器已停止")
 
-                if deploy_choice == 'y':
+                if deploy_choice:
                     print_step(6, "部署到远程")
                     deploy_success, _ = run_hexo_command("hexo deploy")
                     if deploy_success:
-                        print("\n" + "="*60)
+                        print("\n" + "=" * 60)
                         print("部署完成!")
-                        print("="*60)
+                        print("=" * 60)
                     else:
                         print("警告: 部署时出现错误")
                 else:
@@ -487,6 +607,9 @@ def main():
                     print(f"  cd {config.hexo_root}")
                     print("  hexo deploy")
 
+    except (NotionAPIError, OSSUploadError, HexoCommandError, ConfigurationError) as e:
+        print(f"\n错误: {str(e)}")
+        sys.exit(1)
     except Exception as e:
         print(f"\n错误: {str(e)}")
         import traceback

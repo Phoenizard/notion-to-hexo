@@ -22,9 +22,7 @@ temp_images/
 *.swo
 *~
 
-# 测试文件
-test_*.py
-*.test.py
+# 测试输出目录 (not tests/ which contains unit tests)
 test/
 
 # claude.ai

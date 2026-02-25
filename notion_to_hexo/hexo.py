@@ -6,12 +6,16 @@ file/filename utilities for blog post creation.
 """
 
 import re
+import glob
 import shlex
 import shutil
+import logging
 import subprocess
 from pathlib import Path
 
 from .config import config
+
+logger = logging.getLogger(__name__)
 
 
 def find_hexo_executable():
@@ -29,7 +33,6 @@ def find_hexo_executable():
     # Try common npm global paths
     npm_paths = [
         Path.home() / '.npm-global' / 'bin' / 'hexo',
-        Path.home() / '.nvm' / 'versions' / 'node',  # NVM installs
         Path('/usr/local/bin/hexo'),
         Path('/opt/homebrew/bin/hexo'),
     ]
@@ -38,7 +41,13 @@ def find_hexo_executable():
         if p.exists() and p.is_file():
             return str(p)
 
-    # Check for npx as fallback (npx hexo always works if npm is installed)
+    # Try NVM installations - glob for hexo under all node versions
+    nvm_pattern = str(Path.home() / '.nvm' / 'versions' / 'node' / '*/bin/hexo')
+    nvm_hexo = sorted(glob.glob(nvm_pattern))
+    if nvm_hexo:
+        return nvm_hexo[-1]  # Use latest node version
+
+    # Check for npx as fallback
     npx_path = shutil.which('npx')
     if npx_path:
         return None  # Signal to use npx instead
@@ -61,9 +70,8 @@ def run_hexo_command(command_args, cwd=None):
     if cwd is None:
         cwd = config.hexo_root
 
-    # Convert string command to list if needed (for simple commands)
+    # Convert string command to list if needed
     if isinstance(command_args, str):
-        # Only allow simple commands without user input to use string form
         command_list = shlex.split(command_args)
     else:
         command_list = list(command_args)
@@ -74,36 +82,36 @@ def run_hexo_command(command_args, cwd=None):
         if hexo_path:
             command_list[0] = hexo_path
         else:
-            # Fall back to npx hexo
             npx_path = shutil.which('npx')
             if npx_path:
                 command_list = [npx_path, 'hexo'] + command_list[1:]
-            # else: keep 'hexo' and let FileNotFoundError be raised
 
-    print(f"执行命令: {' '.join(command_list)}")
+    logger.info("执行命令: %s", ' '.join(command_list))
 
     try:
         result = subprocess.run(
             command_list,
-            cwd=str(cwd),  # Use cwd parameter instead of cd &&
+            cwd=str(cwd),
             capture_output=True,
             text=True,
-            # shell=False is the default, explicitly noted for clarity
         )
 
         if result.returncode != 0:
-            print(f"错误: {result.stderr}")
+            logger.error("命令失败: %s", result.stderr)
             return False, result.stderr
 
-        print(f"成功: {result.stdout}")
+        logger.info("命令成功: %s", result.stdout[:200] if result.stdout else '')
         return True, result.stdout
 
     except FileNotFoundError:
-        error_msg = f"命令未找到: {command_list[0]}。请确保hexo-cli已安装 (npm install -g hexo-cli)。"
-        print(f"错误: {error_msg}")
+        error_msg = (
+            f"命令未找到: {command_list[0]}。"
+            "请确保hexo-cli已安装 (npm install -g hexo-cli)。"
+        )
+        logger.error(error_msg)
         return False, error_msg
     except Exception as e:
-        print(f"错误: {str(e)}")
+        logger.error("执行命令出错: %s", e)
         return False, str(e)
 
 
@@ -117,11 +125,8 @@ def sanitize_filename(filename):
     Returns:
         Sanitized filename safe for filesystem
     """
-    # Remove or replace illegal characters
     filename = re.sub(r'[<>:"/\\|?*]', '-', filename)
     filename = re.sub(r'\s+', '-', filename)
-    # Remove leading/trailing hyphens to avoid command-line argument parsing
     filename = filename.strip('-')
-    # Merge multiple consecutive hyphens
     filename = re.sub(r'-+', '-', filename)
     return filename

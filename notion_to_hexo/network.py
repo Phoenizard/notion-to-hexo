@@ -5,9 +5,12 @@ Provides HTTP request functionality with timeout and retry support.
 """
 
 import time
+import logging
 import requests
 
 from .config import TIMEOUT_API, TIMEOUT_IMAGE, MAX_RETRIES, RETRY_BACKOFF
+
+logger = logging.getLogger(__name__)
 
 
 def request_with_retry(method, url, **kwargs):
@@ -26,11 +29,8 @@ def request_with_retry(method, url, **kwargs):
     Raises:
         requests.RequestException: After all retries exhausted
     """
-    # Determine timeout based on request type
     timeout_type = kwargs.pop('timeout_type', 'api')
     timeout = TIMEOUT_IMAGE if timeout_type == 'image' else TIMEOUT_API
-
-    # Ensure timeout is always set
     kwargs.setdefault('timeout', timeout)
 
     last_exception = None
@@ -43,23 +43,24 @@ def request_with_retry(method, url, **kwargs):
         except requests.exceptions.Timeout as e:
             last_exception = e
             wait_time = RETRY_BACKOFF ** attempt
-            print(f"请求超时 (尝试 {attempt + 1}/{MAX_RETRIES}), {wait_time}秒后重试...")
+            logger.warning("请求超时 (尝试 %d/%d), %d秒后重试...",
+                           attempt + 1, MAX_RETRIES, wait_time)
             time.sleep(wait_time)
         except requests.exceptions.ConnectionError as e:
             last_exception = e
             wait_time = RETRY_BACKOFF ** attempt
-            print(f"连接错误 (尝试 {attempt + 1}/{MAX_RETRIES}), {wait_time}秒后重试...")
+            logger.warning("连接错误 (尝试 %d/%d), %d秒后重试...",
+                           attempt + 1, MAX_RETRIES, wait_time)
             time.sleep(wait_time)
         except requests.exceptions.HTTPError as e:
-            # Don't retry client errors (4xx), only server errors (5xx)
             if e.response is not None and 400 <= e.response.status_code < 500:
-                raise  # Re-raise immediately for client errors
+                raise
             last_exception = e
             wait_time = RETRY_BACKOFF ** attempt
-            print(f"服务器错误 (尝试 {attempt + 1}/{MAX_RETRIES}), {wait_time}秒后重试...")
+            logger.warning("服务器错误 (尝试 %d/%d), %d秒后重试...",
+                           attempt + 1, MAX_RETRIES, wait_time)
             time.sleep(wait_time)
 
-    # All retries exhausted
     if last_exception is not None:
         raise last_exception
     raise requests.exceptions.RequestException(f"Request failed after {MAX_RETRIES} retries")

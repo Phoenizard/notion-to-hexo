@@ -1,4 +1,14 @@
 {
+  "notion": {
+    "token": "secret_xxx"
+  },
+  "oss": {
+    "access_key_id": "LTAI...",
+    "access_key_secret": "",
+    "bucket_name": "your-bucket",
+    "endpoint": "oss-cn-hangzhou.aliyuncs.com",
+    "cdn_domain": "your-bucket.oss-cn-hangzhou.aliyuncs.com"
+  },
   "hexo": {
     "blog_path": "/path/to/your/hexo/blog",
     "default_category": "",

@@ -4,9 +4,9 @@ Markdown conversion utilities for Notion to Hexo.
 Provides functions to convert Notion blocks to Markdown format.
 """
 
-import requests
+import logging
 
-from .network import request_with_retry
+logger = logging.getLogger(__name__)
 
 
 def rich_text_to_markdown(rich_text_array):
@@ -53,16 +53,15 @@ def rich_text_to_markdown(rich_text_array):
     return ''.join(result)
 
 
-def blocks_to_markdown(blocks, headers, level=0):
+def blocks_to_markdown(blocks, fetch_children=None, level=0):
     """
     Convert Notion blocks to Markdown.
 
-    This is a simplified version that handles common block types.
-    May need extension for specific use cases.
-
     Args:
         blocks: List of Notion block objects
-        headers: HTTP headers for Notion API (needed for child block fetches)
+        fetch_children: Callable(block_id) -> list of child blocks.
+                        Used for fetching nested blocks with pagination.
+                        If None, children are skipped.
         level: Current nesting level for indentation
 
     Returns:
@@ -77,7 +76,7 @@ def blocks_to_markdown(blocks, headers, level=0):
         if block_type == 'paragraph':
             text = rich_text_to_markdown(block_content.get('rich_text', []))
             markdown.append(text)
-            markdown.append('')  # Empty line
+            markdown.append('')
 
         elif block_type == 'heading_1':
             text = rich_text_to_markdown(block_content.get('rich_text', []))
@@ -103,6 +102,13 @@ def blocks_to_markdown(blocks, headers, level=0):
             text = rich_text_to_markdown(block_content.get('rich_text', []))
             indent = '  ' * level
             markdown.append(f"{indent}1. {text}")
+
+        elif block_type == 'to_do':
+            text = rich_text_to_markdown(block_content.get('rich_text', []))
+            checked = block_content.get('checked', False)
+            indent = '  ' * level
+            checkbox = '[x]' if checked else '[ ]'
+            markdown.append(f"{indent}- {checkbox} {text}")
 
         elif block_type == 'code':
             code_text = rich_text_to_markdown(block_content.get('rich_text', []))
@@ -137,26 +143,80 @@ def blocks_to_markdown(blocks, headers, level=0):
                 markdown.append(f"> {line}")
             markdown.append('')
 
+        elif block_type == 'callout':
+            icon = block_content.get('icon', {}).get('emoji', '')
+            text = rich_text_to_markdown(block_content.get('rich_text', []))
+            prefix = f"{icon} " if icon else ''
+            markdown.append(f"> {prefix}{text}")
+            markdown.append('')
+
         elif block_type == 'divider':
             markdown.append('---')
             markdown.append('')
 
+        elif block_type == 'toggle':
+            text = rich_text_to_markdown(block_content.get('rich_text', []))
+            markdown.append(f"<details><summary>{text}</summary>")
+            markdown.append('')
+
+        elif block_type == 'table':
+            # Table rendering is handled entirely in the has_children block below
+            pass
+
+        elif block_type == 'table_row':
+            # Table rows at top level (shouldn't happen, but handle gracefully)
+            cells = block_content.get('cells', [])
+            row = ' | '.join(rich_text_to_markdown(cell) for cell in cells)
+            markdown.append(f"| {row} |")
+
         # Handle child blocks
-        if block.get('has_children'):
-            children_url = f"https://api.notion.com/v1/blocks/{block['id']}/children"
+        if block.get('has_children') and fetch_children:
             try:
-                children_response = request_with_retry(
-                    'get', children_url, headers=headers, timeout_type='api'
-                )
-                children_data = children_response.json()
-                child_markdown = blocks_to_markdown(
-                    children_data.get('results', []),
-                    headers,
-                    level + 1
-                )
-                markdown.append(child_markdown)
-            except requests.RequestException as e:
-                print(f"警告: 获取子块失败: {e}")
-                # Continue processing other blocks
+                children = fetch_children(block['id'])
+
+                if block_type == 'table':
+                    # Render complete GFM table from children
+                    table_rows = [b for b in children if b.get('type') == 'table_row']
+                    if table_rows:
+                        # First row (header)
+                        first_cells = table_rows[0].get('table_row', {}).get('cells', [])
+                        header = ' | '.join(
+                            rich_text_to_markdown(cell) for cell in first_cells
+                        )
+                        markdown.append(f"| {header} |")
+
+                        # Separator
+                        separator = ' | '.join(['---'] * len(first_cells))
+                        markdown.append(f"| {separator} |")
+
+                        # Data rows
+                        for row_block in table_rows[1:]:
+                            row_cells = row_block.get('table_row', {}).get('cells', [])
+                            row = ' | '.join(
+                                rich_text_to_markdown(cell) for cell in row_cells
+                            )
+                            markdown.append(f"| {row} |")
+
+                    markdown.append('')
+                else:
+                    child_markdown = blocks_to_markdown(
+                        children,
+                        fetch_children,
+                        level + 1
+                    )
+                    if child_markdown.strip():
+                        markdown.append(child_markdown)
+
+                    # Close toggle
+                    if block_type == 'toggle':
+                        markdown.append('</details>')
+                        markdown.append('')
+            except Exception as e:
+                logger.warning("获取子块失败: %s", e)
+
+        elif block_type == 'toggle' and not block.get('has_children'):
+            # Close empty toggle
+            markdown.append('</details>')
+            markdown.append('')
 
     return '\n'.join(markdown)

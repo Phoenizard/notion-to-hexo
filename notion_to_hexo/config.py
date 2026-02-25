@@ -6,24 +6,25 @@ This module handles loading configuration from:
 2. config.json file
 3. Default values
 4. Interactive prompts (handled in cli.py)
+
+Import-time side effects have been removed (v3.0).
+Use get_config() for lazy loading or load_config() for explicit loading.
 """
 
 import os
 import json
+import logging
 from pathlib import Path
 
-# ==================== Network Configuration ====================
-# Network configuration for timeouts and retries
+logger = logging.getLogger(__name__)
 
+# ==================== Network Configuration ====================
 TIMEOUT_API = 15      # Notion API calls (seconds)
 TIMEOUT_IMAGE = 30    # Image downloads (seconds)
 MAX_RETRIES = 3       # Number of retry attempts
 RETRY_BACKOFF = 2     # Exponential backoff multiplier
 
 # ==================== Environment Variable Names ====================
-# Security warning: Never commit secrets to version control!
-# Use environment variables or .env file for sensitive data.
-
 ENV_VARS = {
     'notion_token': 'NOTION_TOKEN',
     'oss_access_key_id': 'NOTION_OSS_ACCESS_KEY_ID',
@@ -60,8 +61,8 @@ class Config:
             'access_key_id': '',
             'access_key_secret': '',
             'bucket_name': '',
-            'endpoint': '',  # e.g., oss-cn-hangzhou.aliyuncs.com
-            'cdn_domain': '',  # e.g., phoenizard-picgo.oss-cn-hangzhou.aliyuncs.com
+            'endpoint': '',
+            'cdn_domain': '',
         }
 
         # Hexo article defaults
@@ -75,22 +76,23 @@ class Config:
 
     def get_config_path(self):
         """Get the path to config.json relative to the package."""
-        # First try package directory's parent (project root)
         package_dir = Path(__file__).parent.parent
         config_path = package_dir / 'config.json'
         if config_path.exists():
             return config_path
 
-        # Fallback to current working directory
         cwd_config = Path.cwd() / 'config.json'
         if cwd_config.exists():
             return cwd_config
 
-        return config_path  # Return project root path (may not exist)
+        return config_path
 
 
 # Global configuration instance
 config = Config()
+
+# Lazy loading flag
+_loaded = False
 
 
 def load_config(config_path=None):
@@ -109,9 +111,11 @@ def load_config(config_path=None):
     Returns:
         The global config instance
     """
-    global config
+    global config, _loaded
 
-    # Determine config file path
+    # Load .env first
+    try_load_dotenv()
+
     if config_path is None:
         config_path = config.get_config_path()
     else:
@@ -124,11 +128,11 @@ def load_config(config_path=None):
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 file_config = json.load(f)
-            print(f"✓ 已从 {config_path} 加载配置")
+            logger.info("已从 %s 加载配置", config_path)
         except json.JSONDecodeError as e:
-            print(f"警告: config.json 格式错误: {e}")
+            logger.warning("config.json 格式错误: %s", e)
     else:
-        print(f"未找到配置文件: {config_path}")
+        logger.debug("未找到配置文件: %s", config_path)
 
     # Step 2: Apply config.json values (will be overridden by env vars)
     if 'notion' in file_config and file_config['notion'].get('token'):
@@ -152,25 +156,25 @@ def load_config(config_path=None):
         config.hexo_config['default_description'] = hexo.get('default_description', '')
         config.hexo_config['default_mathjax'] = hexo.get('default_mathjax', False)
 
-    # Step 3: Environment variables OVERRIDE config.json
-    # This ensures secrets can be provided securely via env vars
+    if 'llm' in file_config:
+        llm = file_config['llm']
+        if llm.get('dashscope_api_key'):
+            config.dashscope_api_key = llm['dashscope_api_key']
 
-    # Notion token
+    # Step 3: Environment variables OVERRIDE config.json
     env_token = os.environ.get(ENV_VARS['notion_token'])
     if env_token:
         config.notion_token = env_token
-        print(f"✓ 使用环境变量 {ENV_VARS['notion_token']}")
+        logger.info("使用环境变量 %s", ENV_VARS['notion_token'])
 
-    # OSS credentials
     env_oss_key = os.environ.get(ENV_VARS['oss_access_key_id'])
     if env_oss_key:
         config.oss_config['access_key_id'] = env_oss_key
-        print(f"✓ 使用环境变量 {ENV_VARS['oss_access_key_id']}")
+        logger.info("使用环境变量 %s", ENV_VARS['oss_access_key_id'])
 
     env_oss_secret = os.environ.get(ENV_VARS['oss_access_key_secret'])
     if env_oss_secret:
         config.oss_config['access_key_secret'] = env_oss_secret
-        print(f"✓ 使用环境变量 {ENV_VARS['oss_access_key_secret']}")
 
     env_bucket = os.environ.get(ENV_VARS['oss_bucket_name'])
     if env_bucket:
@@ -184,18 +188,35 @@ def load_config(config_path=None):
     if env_cdn:
         config.oss_config['cdn_domain'] = env_cdn
 
-    # Hexo root
     env_hexo_root = os.environ.get(ENV_VARS['hexo_root'])
     if env_hexo_root:
         config.hexo_root = Path(env_hexo_root)
-        print(f"✓ 使用环境变量 {ENV_VARS['hexo_root']}")
+        logger.info("使用环境变量 %s", ENV_VARS['hexo_root'])
 
-    # DashScope API key
     env_dashscope = os.environ.get(ENV_VARS['dashscope_api_key'])
     if env_dashscope:
         config.dashscope_api_key = env_dashscope
-        print(f"✓ 使用环境变量 {ENV_VARS['dashscope_api_key']}")
 
+    _loaded = True
+    return config
+
+
+def get_config(config_path=None):
+    """
+    Get configuration, loading it on first access (lazy loading).
+
+    This is the recommended way to access configuration.
+    The config is loaded once and cached.
+
+    Args:
+        config_path: Optional path to config.json for first load.
+
+    Returns:
+        The global config instance
+    """
+    global _loaded
+    if not _loaded:
+        load_config(config_path)
     return config
 
 
@@ -203,7 +224,7 @@ def try_load_dotenv():
     """
     Try to load .env file if python-dotenv is available.
 
-    This is called automatically on module import.
+    Called by load_config(), not on module import.
     """
     try:
         from dotenv import load_dotenv
@@ -211,14 +232,6 @@ def try_load_dotenv():
         env_path = package_dir / '.env'
         if env_path.exists():
             load_dotenv(env_path)
-            print(f"✓ 已从 {env_path} 加载环境变量")
+            logger.info("已从 %s 加载环境变量", env_path)
     except ImportError:
-        # python-dotenv not installed, skip .env loading
         pass
-
-
-# Load .env on module import
-try_load_dotenv()
-
-# Load configuration on module import
-load_config()
