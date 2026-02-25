@@ -42,4 +42,10 @@ python -m py_compile notion_to_hexo/cli.py
 # Import 无副作用检查
 python -c "import notion_to_hexo" 2>&1 | head -1
 # 期望：无输出
+
+# Docker 构建验证
+docker compose build
+docker compose up -d
+# 访问 http://localhost:8501 验证 Streamlit UI
+docker compose down
 ```

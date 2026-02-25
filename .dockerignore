@@ -1,0 +1,13 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+.env
+config.json
+test/
+tests/
+llm_test/
+doc/
+*.egg-info
+.pytest_cache
+.mypy_cache

@@ -1,0 +1,10 @@
+services:
+  notion-to-hexo:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./config.json:/app/config.json
+      - ~/Documents/Blog:/blog
+    environment:
+      - HEXO_ROOT=/blog

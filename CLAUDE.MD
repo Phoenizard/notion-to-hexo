@@ -14,7 +14,7 @@
 
 ## Architecture
 
-### Project Structure (v2.0 - Modular)
+### Project Structure (v3.0 - Productized)
 
 ```
 notion-to-hexo/
@@ -26,7 +26,20 @@ notion-to-hexo/
 │   ├── oss.py                    # Aliyun OSS image handling
 │   ├── notion.py                 # Notion API integration
 │   ├── converter.py              # Markdown conversion logic
-│   └── cli.py                    # Command-line interface and main workflow
+│   ├── cli.py                    # Command-line interface and main workflow
+│   ├── app.py                    # Streamlit Web UI
+│   └── exceptions.py             # Custom exception classes
+│
+├── tests/                        # Test suite
+│   ├── test_converter.py
+│   ├── test_notion.py
+│   ├── test_cli.py
+│   └── test_hexo.py
+│
+├── Dockerfile                    # Docker image (Python + Node.js + Hexo)
+├── docker-compose.yml            # Docker Compose for one-command startup
+├── .dockerignore                 # Docker build exclusions
+├── start.command                 # macOS double-click launcher
 │
 ├── notion_to_hexo.py             # Backwards-compatible entry point (thin wrapper)
 ├── publish_notion.py             # Simplified launcher with config support
@@ -421,6 +434,30 @@ print(f"DEBUG: Blocks data: {json.dumps(blocks_data, indent=2)}")
 - Ensure `hexo-cli` installed globally
 - Check `config.hexo_root` points to valid Hexo project
 - Run `hexo version` manually to verify
+
+---
+
+## Docker Deployment
+
+### Quick Start (Recommended)
+```bash
+# Double-click start.command on macOS, or:
+docker compose up --build -d
+open http://localhost:8501
+```
+
+### Architecture
+- Base image: `python:3.12-slim` + Node.js 20 + hexo-cli
+- `config.json` mounted as volume (never baked into image)
+- Blog directory mounted at `/blog`
+- Streamlit UI exposed on port 8501
+
+### Key Commands
+```bash
+docker compose up --build -d    # Build and start
+docker compose down              # Stop
+docker compose logs -f           # View logs
+```
 
 ---
 

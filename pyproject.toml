@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=64", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "notion-to-hexo"
@@ -27,6 +27,9 @@ dev = [
 
 [project.scripts]
 notion-to-hexo = "notion_to_hexo.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["notion_to_hexo*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
